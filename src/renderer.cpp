@@ -36,6 +36,10 @@ void Renderer::EnsureTarget() {
         if (size.width == width_ && size.height == height_) return;
         target_.Reset();
         textBrush_.Reset();
+        stripBgBrush_.Reset();
+        placeholderBrush_.Reset();
+        borderBrush_.Reset();
+        currentBorderBrush_.Reset();
     }
     if (width_ == 0 || height_ == 0 || !hwnd_ || !factory_) return;
 
@@ -50,6 +54,10 @@ void Renderer::EnsureTarget() {
         &target_);
     if (SUCCEEDED(hr)) {
         target_->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::LightGray), &textBrush_);
+        target_->CreateSolidColorBrush(D2D1::ColorF(0.11f, 0.11f, 0.13f, 0.96f), &stripBgBrush_);
+        target_->CreateSolidColorBrush(D2D1::ColorF(0.20f, 0.20f, 0.23f, 1.0f), &placeholderBrush_);
+        target_->CreateSolidColorBrush(D2D1::ColorF(0.42f, 0.42f, 0.46f, 1.0f), &borderBrush_);
+        target_->CreateSolidColorBrush(D2D1::ColorF(0.93f, 0.93f, 0.95f, 1.0f), &currentBorderBrush_);
     }
 }
 
@@ -76,7 +84,8 @@ Microsoft::WRL::ComPtr<ID2D1Bitmap> Renderer::CreateBitmapFromPixels(
 }
 
 void Renderer::Render(ID2D1Bitmap* image, const ViewTransform& view,
-                      bool hasError, const std::wstring& errorText) {
+                      bool hasError, const std::wstring& errorText,
+                      const FilmstripDraw& filmstrip) {
     if (!target_) return;
 
     target_->BeginDraw();
@@ -103,11 +112,72 @@ void Renderer::Render(ID2D1Bitmap* image, const ViewTransform& view,
                            textFormat_.Get(), rc, textBrush_.Get());
     }
 
+    if (filmstrip.visible) {
+        DrawFilmstrip(filmstrip);
+    }
+
     const HRESULT hr = target_->EndDraw();
     if (hr == D2DERR_RECREATE_TARGET) {
         target_.Reset();
         textBrush_.Reset();
+        stripBgBrush_.Reset();
+        placeholderBrush_.Reset();
+        borderBrush_.Reset();
+        currentBorderBrush_.Reset();
         EnsureTarget();
+    }
+}
+
+namespace {
+D2D1_RECT_F FitRect(const D2D1_RECT_F& cell, UINT iw, UINT ih) {
+    const float cw = cell.right - cell.left;
+    const float ch = cell.bottom - cell.top;
+    const float s = std::min(cw / static_cast<float>(iw), ch / static_cast<float>(ih));
+    const float w = static_cast<float>(iw) * s;
+    const float h = static_cast<float>(ih) * s;
+    const float x = cell.left + (cw - w) / 2.0f;
+    const float y = cell.top + (ch - h) / 2.0f;
+    return D2D1::RectF(x, y, x + w, y + h);
+}
+} // namespace
+
+void Renderer::DrawFilmstrip(const FilmstripDraw& fs) {
+    if (!stripBgBrush_ || !placeholderBrush_ || !borderBrush_ || !currentBorderBrush_) {
+        return;
+    }
+    // Flat dark background + subtle top separator.
+    target_->FillRectangle(fs.stripRect, stripBgBrush_.Get());
+    target_->DrawLine(D2D1::Point2F(fs.stripRect.left, fs.stripRect.top),
+                      D2D1::Point2F(fs.stripRect.right, fs.stripRect.top),
+                      borderBrush_.Get(), 1.0f);
+
+    for (const auto& cell : fs.cells) {
+        if (cell.bitmap) {
+            const D2D1_SIZE_F size = cell.bitmap->GetSize();
+            target_->DrawBitmap(cell.bitmap, FitRect(cell.rect,
+                                                     static_cast<UINT>(size.width),
+                                                     static_cast<UINT>(size.height)),
+                                1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+        } else {
+            // Neutral placeholder while the thumbnail loads (or for failures).
+            target_->FillRectangle(cell.rect, placeholderBrush_.Get());
+        }
+        target_->DrawRectangle(cell.rect,
+                               cell.isCurrent ? currentBorderBrush_.Get() : borderBrush_.Get(),
+                               cell.isCurrent ? 2.0f : 1.0f);
+    }
+
+    if (!fs.infoText.empty()) {
+        EnsureText();
+        const D2D1_RECT_F rc = D2D1::RectF(fs.stripRect.left + 12.0f,
+                                           fs.stripRect.top - 24.0f,
+                                           fs.stripRect.right - 12.0f,
+                                           fs.stripRect.top - 2.0f);
+        if (rc.top >= 0.0f) {
+            target_->DrawTextW(fs.infoText.c_str(),
+                               static_cast<UINT32>(fs.infoText.size()),
+                               textFormat_.Get(), rc, textBrush_.Get());
+        }
     }
 }
 

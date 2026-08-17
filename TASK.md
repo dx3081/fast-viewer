@@ -1,87 +1,108 @@
 # Fast Viewer — Task State
 
-Current phase: M1 — Performance
+Current phase: M2 — Picasa-style UX
 
-## M1 status
+## M2 status
 
-M0.1 (Core Viewer Cleanup) is complete: commit b59fbfa "fix: clamp pan and
-bound image decode memory". M1 makes navigation genuinely fast without making
-the computer feel slow.
+M1.1 (Preloaded Presentation Latency Verification) is complete: commit 10f8456
+"perf: verify cached presentation latency". M2 adds the minimal Picasa
+Photo Viewer-style interaction layer on top of the already-fast core viewer.
 
-## M1 authorized scope (performance only)
+## M2 authorized scope
 
-1. Move expensive image decode work off the UI thread.
-2. Keep user input responsive even while uncached large images load.
-3. Small bounded decoded-image cache (budget-based, ~256 MB soft).
-4. Conservative nearby preloading (N-1 / N+1, direction N±2 optionally).
-5. Cancel/deprioritize stale work during rapid navigation (generation ids).
-6. Keep idle CPU, disk activity, and memory low.
-7. Keep large-directory (50,000 entries) behavior responsive.
-8. Preserve the small, simple architecture; no new dependencies.
+- hidden bottom filmstrip (overlay; main image stays dominant)
+- reveal when the pointer enters the bottom activation zone (~24 px, DPI-aware)
+- auto-hide ~600 ms after the pointer leaves; re-entry cancels the hide
+- nearby thumbnails only, rendered as a small virtualized window around the
+  current index (never one UI object per image)
+- thumbnails decoded off the UI thread by one low-priority worker; bounded
+  separate thumbnail cache (~24 MB)
+- mouse wheel over the filmstrip navigates (wheel up = previous, wheel down =
+  next); wheel over the main image still zooms
+- clicking a visible thumbnail navigates through the existing async
+  latest-wins request system
+- current image stays near the filmstrip center where practical; natural
+  alignment at directory start/end (no fake slots, no wrap)
+- lightweight filename / dimensions / index-total text only while the
+  filmstrip is visible
+- filmstrip works in immersive and normal window modes; DPI-aware
 
-Primary principle:
+## Filmstrip layout rules
 
-> Fast Viewer must never achieve responsiveness by aggressively consuming
-> background CPU, SSD bandwidth, or memory.
+- hot zone: bottom 24 logical px; filmstrip height = thumbnail height
+  (96 logical px) + padding; thumbnail cells 120 x 96 logical px, 8 px gap,
+  16 px margins; visible cell count = width-driven, clamped to 5..11
+- constants centralized in filmstrip.h (future viewer.conf candidates)
+- current thumbnail marked with a brighter border only; dark flat background,
+  no blur/glass/transparency effects
 
-## M1 explicit exclusions
+## M2 explicit exclusions
 
-No filmstrip, thumbnail UI, thumbnail cache, settings GUI, viewer.conf parsing,
-installer, file associations, directory watcher, image editing, right-click
-menu, metadata UI, plugin system, telemetry, update checker, network code, AI,
-cloud features, recursive directory browsing, custom codecs, tiled image
-renderer, speculative multi-stage architecture, generic task frameworks.
+No right-click menu, settings GUI, file operations, image editing, rotation
+UI, slideshow, favorites/ratings/tags/albums, EXIF panel, metadata editor,
+folder tree, home screen, toolbar, menu bar, persistent title overlay, zoom
+controls, scrollbars, plugin system, themes, updater, telemetry, network, AI,
+cloud, recursive browsing, GIF/RAW support, custom codecs, installer, file
+associations, viewer.conf parsing, release packaging.
 
-## M1 threading / architecture summary
+## M2 Definition of Done
 
-- UI thread: window messages, input, paint, Direct2D (all D2D objects are
-  created and used on the UI thread only).
-- Decode worker (1 thread, normal priority): user-requested decodes.
-- Preload worker (1 thread, THREAD_PRIORITY_BELOW_NORMAL): speculative decodes.
-- COM/WIC threading: each worker thread calls CoInitializeEx(COINIT_MULTITHREADED)
-  and creates its own IWICImagingFactory; no COM objects cross threads.
-- Cross-thread handoff: workers produce immutable CPU-side pixel buffers
-  (32bpp premultiplied BGRA); the UI thread creates the Direct2D bitmap from
-  the buffer. No D2D or WIC object is shared across threads.
-- Request model: every navigation intent gets an incrementing request id; the
-  decode queue is latest-wins (single pending slot, no unbounded queue); stale
-  completed decodes are detected by id and never displayed.
+- filmstrip hidden by default; bottom hot-zone reveal works
+- auto-hide works; re-entry cancels hide
+- nearby thumbnails render; current image near center; start/end OK
+- wheel over filmstrip navigates; wheel over main image still zooms
+- thumbnail click navigates via the async latest-wins path
+- lightweight info (filename/dimensions/index) only while visible
+- immersive + normal window modes work; DPI works
+- close during thumbnail work is safe
+- thumbnail cache bounded; no whole-directory thumbnail generation
+- hidden filmstrip does no unnecessary work; idle CPU ~0%, disk zero
+- main-image navigation and cold-start performance preserved
+- all M0/M0.1/M1/M1.1 regressions pass; zero warnings; no dependencies
+- project remains small
 
-## M1 decoded-memory policy
+After M2: STOP. No installer, no release, no M3. Human review decides whether
+to prepare 1.0.
 
-- Per-image safety limit preserved: 512 MB estimated decoded bytes
-  (width*height*4, overflow-safe) - unchanged from M0.1.
-- Decoded-image cache: soft budget 256 MB, LRU with the current image pinned.
-- Preload gate: speculative decode is skipped when its estimate plus current
-  cache/current-image bytes plus headroom would exceed ~448 MB, and preloads
-  over 256 MB estimated are never started. Large images therefore reduce or
-  eliminate speculative caching.
-- The user-requested image takes priority over speculative cache.
+## M2 known limitations
 
-## M1 Definition of Done
+- Thumbnails use the WIC full-decode-then-scale path (IWICBitmapScaler): WIC
+  has no generic reduced-size decode, so a large image's thumbnail still decodes
+  the full frame once (off-thread, one-time, cached, only for visible cells).
+- The filmstrip draws over the bottom of the main image (overlay); the very
+  bottom edge of a zoomed image is temporarily covered while the strip is
+  visible.
+- Cache-hit presentation is unchanged (~10 ms); the first time a 40-60 MP image
+  is shown, its one-time D2D upload (35-50 ms) is paid on the UI thread (as in
+  M1).
+- If the D2D device is lost (D2DERR_RECREATE_TARGET), cached bitmaps are not
+  automatically re-uploaded; the current image re-renders from the next decode
+  (rare on desktop, existing M1 limitation).
+- Thumbnail failures are remembered per session (bounded) so broken files are
+  never retried forever.
+- No thumbnail animation/transition (by design; instant appearance).
 
-- image decode does not block the UI thread during navigation
-- rapid navigation stays responsive; stale results cannot overwrite newer ones
-- preload is conservative; decoded cache is budgeted and bounded
-- large images reduce/disable speculative caching as needed
-- no unbounded job queue
-- idle CPU settles near zero; idle disk activity settles to zero; memory stabilizes
-- 50,000-entry directory does not freeze the UI
-- current image zoom/pan stays responsive during background decode
-- minimized viewer does not continue aggressive speculative work
-- all close paths cleanly stop workers
-- all M0.1 behavior remains correct
-- clean build with zero warnings; no third-party dependencies
-- architecture remains small; tests and measurements documented
-- M2 remains unauthorized
+## M2 measurements (M2 completion)
 
-## Remaining known limitations (unchanged from M0.1 unless noted)
+- Cold first visible image: ~87-119 ms (M1.1 baseline ~112 ms; no regression)
+- Filmstrip reveal (bottom-zone entry -> rendered): ~8-9 ms
+- First nearby thumbnail: ~31-44 ms; nearby batch settles in ~1.8 s
+- Main preload-hit navigation with filmstrip visible: ~18 ms (M1.1 ~10 ms;
+  within the 50 ms target)
+- Filmstrip visible settled: CPU 0%, working set +~8 MB (thumbnails ~24 MB
+  budget), zero pending thumbnail jobs
+- Filmstrip hidden idle (5 s and 30 s): CPU 0%, disk zero, no thumbnail work
+- 500-image dir: only visible-neighborhood thumbnails requested (~11-13, never
+  the whole directory); thumbnail cache bounded under the 24 MB budget
+- 50,000-entry dir: filmstrip reveals at index 0 request only indices ~0-15
 
-- No preload of distant images; only the immediate neighborhood.
-- WebP only via an installed system WIC codec (none on Windows 10 22H2).
-- HEIC/HEIF/AVIF/GIF/RAW out of scope; failure state.
-- Corrupt files may partially decode via WIC; never crashes.
-- Normal-window geometry persists via a tiny registry key.
-- Timing instrumentation only when FAST_VIEWER_TIMING is set; no telemetry.
+## M2 automated verification
 
-M2 is NOT authorized. Stop and await human review.
+- M2 suite: 26 checks (reveal, auto-hide, hide cancellation, layout at start
+  and mid-directory, wheel-zoom unchanged, wheel-nav, thumbnail click, rapid
+  clicks, right-click close, close during thumbnail load, hidden idle, bounded
+  cache, 50k local-only, pan near bottom) - all pass
+- Regression: M0 50/50, M0.1 27/27, M1 26/26 - all pass on the M2 build
+
+After M2: STOP. No installer, no release, no M3. Human review decides whether
+to prepare 1.0.

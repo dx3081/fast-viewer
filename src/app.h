@@ -4,11 +4,14 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "cache.h"
 #include "decoder.h"
+#include "filmstrip.h"
 #include "navigation.h"
 #include "renderer.h"
+#include "thumbnail.h"
 #include "window.h"
 
 // Exit-path instrumentation helper (declared here for main.cpp).
@@ -40,6 +43,7 @@ private:
 
     // navigation / async decode
     void Navigate(int delta);
+    void GoToIndex(int target);
     void OnScanComplete();
     void OnDecodeDone(uint64_t id);
     void OnPreloadDone(uint64_t id);
@@ -50,6 +54,16 @@ private:
     void SchedulePreload();
     bool IsNearby(const std::wstring& path) const;
     void ShowFailure(const std::wstring& path, HRESULT hr, uint64_t decodeMicros);
+
+    // filmstrip
+    void TrackFilmstripPointer(POINT pt);
+    void RevealFilmstrip();
+    void HideFilmstrip();
+    void ScheduleThumbs();
+    void OnThumbDone(uint64_t gen);
+    void BuildFilmstripDraw(FilmstripDraw& out);
+    std::wstring BuildInfoText();
+    float DpiScale() const;
 
     // actions (dispatched from the centralized input mapping)
     void Close();
@@ -72,6 +86,14 @@ private:
     std::unique_ptr<ImageDecoder> decoder_;
     std::unique_ptr<ImageCache> cache_;
     std::unique_ptr<Navigation> nav_;
+    std::unique_ptr<ImageCache> thumbCache_;
+    std::unique_ptr<ThumbnailLoader> thumbLoader_;
+    Filmstrip filmstrip_;
+    uint64_t thumbGen_ = 0;
+    bool hideTimerRunning_ = false;
+    bool filmstripGeomLogged_ = false;
+    std::wstring lastInfoText_;
+    std::vector<std::wstring> thumbFailed_; // bounded set: no infinite retry of broken files
 
     // displayed state
     std::shared_ptr<DecodedImage> current_;

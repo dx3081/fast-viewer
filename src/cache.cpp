@@ -35,7 +35,7 @@ void ImageCache::UnpinAll() {
 
 uint64_t ImageCache::EvictOld() {
     uint64_t evictedBytes = 0;
-    while (bytes_ > kSoftBudget && !lru_.empty()) {
+    while (bytes_ > budget_ && !lru_.empty()) {
         std::wstring victim;
         for (auto it = lru_.rbegin(); it != lru_.rend(); ++it) {
             auto mit = map_.find(*it);

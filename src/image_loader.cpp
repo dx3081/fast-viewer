@@ -146,3 +146,85 @@ bool IsSupportedExtension(const std::wstring& path) {
     return ext == L"jpg" || ext == L"jpeg" || ext == L"png" ||
            ext == L"bmp" || ext == L"tif" || ext == L"tiff";
 }
+
+std::shared_ptr<DecodedPixels> DecodeThumbnail(IWICImagingFactory* factory,
+                                               const std::wstring& path, UINT maxDim) {
+    if (!factory || maxDim == 0) return nullptr;
+
+    Microsoft::WRL::ComPtr<IWICBitmapDecoder> decoder;
+    HRESULT hr = factory->CreateDecoderFromFilename(
+        path.c_str(), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnDemand, &decoder);
+    if (FAILED(hr)) return nullptr;
+
+    Microsoft::WRL::ComPtr<IWICBitmapFrameDecode> frame;
+    hr = decoder->GetFrame(0, &frame);
+    if (FAILED(hr)) return nullptr;
+
+    UINT sw = 0, sh = 0;
+    hr = frame->GetSize(&sw, &sh);
+    if (FAILED(hr) || sw == 0 || sh == 0 || sw > kMaxImageDimension || sh > kMaxImageDimension) {
+        return nullptr;
+    }
+
+    // Apply EXIF orientation so thumbnails display upright.
+    Microsoft::WRL::ComPtr<IWICBitmapSource> oriented;
+    const int orientation = ReadOrientation(frame.Get());
+    if (orientation != 1) {
+        Microsoft::WRL::ComPtr<IWICBitmapFlipRotator> rotator;
+        hr = factory->CreateBitmapFlipRotator(&rotator);
+        if (FAILED(hr)) return nullptr;
+        hr = rotator->Initialize(frame.Get(), OrientationTransform(orientation));
+        if (FAILED(hr)) return nullptr;
+        oriented = rotator;
+        rotator->GetSize(&sw, &sh);
+    } else {
+        oriented = frame;
+    }
+
+    // Scale to fit maxDim x maxDim, preserving aspect ratio.
+    UINT tw = sw, th = sh;
+    if (sw > maxDim || sh > maxDim) {
+        if (sw >= sh) {
+            tw = maxDim;
+            th = static_cast<UINT>(static_cast<uint64_t>(sh) * maxDim / sw);
+        } else {
+            th = maxDim;
+            tw = static_cast<UINT>(static_cast<uint64_t>(sw) * maxDim / sh);
+        }
+        if (tw == 0) tw = 1;
+        if (th == 0) th = 1;
+    }
+
+    Microsoft::WRL::ComPtr<IWICBitmapScaler> scaler;
+    hr = factory->CreateBitmapScaler(&scaler);
+    if (FAILED(hr)) return nullptr;
+    hr = scaler->Initialize(oriented.Get(), tw, th, WICBitmapInterpolationModeFant);
+    if (FAILED(hr)) return nullptr;
+
+    Microsoft::WRL::ComPtr<IWICFormatConverter> converter;
+    hr = factory->CreateFormatConverter(&converter);
+    if (FAILED(hr)) return nullptr;
+    hr = converter->Initialize(scaler.Get(), GUID_WICPixelFormat32bppPBGRA,
+                               WICBitmapDitherTypeNone, nullptr, 0.0,
+                               WICBitmapPaletteTypeCustom);
+    if (FAILED(hr)) return nullptr;
+
+    auto result = std::make_shared<DecodedPixels>();
+    result->width = tw;
+    result->height = th;
+    result->stride = tw * 4;
+    result->srcWidth = sw;
+    result->srcHeight = sh;
+    result->orientation = orientation;
+    result->estimateBytes = static_cast<uint64_t>(tw) * th * 4ULL;
+    try {
+        result->pixels.resize(static_cast<size_t>(result->estimateBytes));
+    } catch (const std::bad_alloc&) {
+        return nullptr;
+    }
+    hr = converter->CopyPixels(nullptr, result->stride,
+                               static_cast<UINT>(result->pixels.size()),
+                               result->pixels.data());
+    if (FAILED(hr)) return nullptr;
+    return result;
+}

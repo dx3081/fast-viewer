@@ -26,6 +26,10 @@ add_executable(fast_viewer WIN32
     src/cache.h
     src/decoder.cpp
     src/decoder.h
+    src/filmstrip.cpp
+    src/filmstrip.h
+    src/thumbnail.cpp
+    src/thumbnail.h
 )
 
 target_compile_options(fast_viewer PRIVATE

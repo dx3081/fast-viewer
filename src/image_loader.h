@@ -43,3 +43,9 @@ std::shared_ptr<DecodedPixels> DecodeToPixels(IWICImagingFactory* factory,
 
 // True if `path`'s extension is in the supported set (jpg/jpeg/png/bmp/tif/tiff).
 bool IsSupportedExtension(const std::wstring& path);
+
+// Decodes a small EXIF-oriented thumbnail that fits within `maxDim` x `maxDim`
+// pixels, using the WIC scaler (no full-size allocation beyond the frame the
+// codec decodes). Returns nullptr on failure; never throws.
+std::shared_ptr<DecodedPixels> DecodeThumbnail(IWICImagingFactory* factory,
+                                               const std::wstring& path, UINT maxDim);

@@ -13,10 +13,17 @@
 namespace {
 
 constexpr UINT kMsgScanDone = WM_APP + 1;
+constexpr UINT_PTR kFilmstripHideTimer = 2;
 constexpr float kZoomFactorPerNotch = 1.25f;
 constexpr float kMaxZoom = 16.0f;
 constexpr float kMinZoomSafety = 0.01f;
 constexpr double kMiB = 1024.0 * 1024.0;
+constexpr uint64_t kThumbCacheBudget = 24ULL * 1024 * 1024; // 24 MB thumbnail cache
+constexpr size_t kMaxThumbFailed = 512;
+
+bool ThumbFailedContains(const std::vector<std::wstring>& v, const std::wstring& path) {
+    return std::find(v.begin(), v.end(), path) != v.end();
+}
 
 } // namespace
 
@@ -50,6 +57,7 @@ std::wstring FileNameOf(const std::wstring& path) {
 App::~App() {
     DebugMark(L"app dtor begin");
     decoder_->Stop();
+    thumbLoader_->Stop();
     DebugMark(L"app dtor end");
 }
 
@@ -68,6 +76,9 @@ bool App::Initialize(HINSTANCE inst, const std::wstring& imagePath) {
     decoder_->Start(hwnd_);
     cache_ = std::make_unique<ImageCache>();
     nav_ = std::make_unique<Navigation>();
+    thumbCache_ = std::make_unique<ImageCache>(kThumbCacheBudget);
+    thumbLoader_ = std::make_unique<ThumbnailLoader>();
+    thumbLoader_->Start(hwnd_);
 
     // First image display must not wait for directory discovery or any decode
     // on the UI thread: the initial decode runs on the decode worker.
@@ -158,8 +169,50 @@ LRESULT App::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
     case kMsgPreloadDone:
         OnPreloadDone(static_cast<uint64_t>(wParam));
         return 0;
+    case kMsgThumbDone:
+        OnThumbDone(static_cast<uint64_t>(wParam));
+        return 0;
+    case WM_TIMER:
+        if (wParam == kFilmstripHideTimer) {
+            KillTimer(hwnd_, kFilmstripHideTimer);
+            hideTimerRunning_ = false;
+            HideFilmstrip();
+            return 0;
+        }
+        break;
+    case WM_MOUSEMOVE:
+        TrackFilmstripPointer(POINT{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) });
+        break; // fall through to input translation (pan moves)
+    case WM_MOUSEWHEEL: {
+        POINT pt{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+        ScreenToClient(hwnd_, &pt);
+        if (filmstrip_.Visible() && filmstrip_.IsOverStrip(pt)) {
+            // wheel up = previous, wheel down = next (conventional filmstrip direction)
+            Navigate(GET_WHEEL_DELTA_WPARAM(wParam) > 0 ? -1 : +1);
+            return 0;
+        }
+        break;
+    }
+    case WM_LBUTTONDOWN: {
+        POINT pt{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+        if (filmstrip_.Visible()) {
+            const int idx = filmstrip_.HitTest(pt);
+            if (idx >= 0) {
+                GoToIndex(idx);
+                return 0;
+            }
+            if (filmstrip_.IsOverStrip(pt)) return 0; // strip background: no pan
+        }
+        break;
+    }
+    case WM_LBUTTONDBLCLK: {
+        POINT pt{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+        if (filmstrip_.Visible() && filmstrip_.IsOverStrip(pt)) return 0;
+        break;
+    }
     case WM_DESTROY:
         DebugMark(L"wm_destroy");
+        KillTimer(hwnd_, kFilmstripHideTimer);
         window_.SaveNormalRect();
         PostQuitMessage(0);
         return 0;
@@ -258,10 +311,33 @@ void App::ClampPan() {
 
 void App::DrawNow() {
     if (!renderer_) return;
+    const int count = (navReady_ && navResult_)
+                          ? static_cast<int>(navResult_->files.size())
+                          : 0;
+    filmstrip_.Update(renderer_->Width(), renderer_->Height(), DpiScale(), count,
+                      displayIndex_);
     ViewTransform view;
     ComputeTransform(view);
+    FilmstripDraw fs;
+    BuildFilmstripDraw(fs);
     renderer_->Render(current_ ? current_->bitmap.Get() : nullptr, view,
-                      errorState_, errorText_);
+                      errorState_, errorText_, fs);
+    if (fs.visible) {
+        if (fs.infoText != lastInfoText_) {
+            lastInfoText_ = fs.infoText;
+            Log(std::format(L"filmstrip: info {}", fs.infoText));
+        }
+        if (!filmstripGeomLogged_) {
+            filmstripGeomLogged_ = true;
+            const float dpi = DpiScale();
+            Log(std::format(
+                L"filmstrip: geometry start={} count={} cellw={:.0f} cellh={:.0f} gap={:.0f} margin={:.0f} top={:.0f} striph={:.0f}",
+                filmstrip_.VisibleStart(), filmstrip_.VisibleCount(),
+                Filmstrip::kThumbW * dpi, Filmstrip::kThumbH * dpi,
+                Filmstrip::kGap * dpi, Filmstrip::kMargin * dpi, fs.stripRect.top,
+                fs.stripRect.bottom - fs.stripRect.top));
+        }
+    }
 }
 
 void App::LogView() {
@@ -425,6 +501,7 @@ void App::DisplayImage(const std::shared_ptr<DecodedImage>& img, int index,
                         (NowMicros() - requestT0Micros_) / 1000.0, renderMs));
     }
     SchedulePreload();
+    ScheduleThumbs();
 }
 
 void App::OnPreloadDone(uint64_t id) {
@@ -528,6 +605,148 @@ void App::ShowFailure(const std::wstring& path, HRESULT hr, uint64_t decodeMicro
     Log(std::format(L"error: {} hr=0x{:08X} decode_ms={:.1f}", path,
                     static_cast<unsigned>(hr), decodeMicros / 1000.0));
     DrawNow();
+    SchedulePreload();
+    ScheduleThumbs();
+}
+
+// --- filmstrip ------------------------------------------------------------
+
+float App::DpiScale() const {
+    const UINT dpi = GetDpiForWindow(hwnd_);
+    return dpi ? static_cast<float>(dpi) / 96.0f : 1.0f;
+}
+
+void App::TrackFilmstripPointer(POINT pt) {
+    if (panning_) return; // preserve active drag; hot zone resumes after release
+    const LONG h = static_cast<LONG>(renderer_->Height());
+    if (filmstrip_.Visible()) {
+        if (filmstrip_.IsOverStrip(pt)) {
+            if (hideTimerRunning_) {
+                KillTimer(hwnd_, kFilmstripHideTimer);
+                hideTimerRunning_ = false;
+            }
+        } else if (!hideTimerRunning_) {
+            SetTimer(hwnd_, kFilmstripHideTimer, Filmstrip::kHideDelayMs, nullptr);
+            hideTimerRunning_ = true;
+        }
+    } else {
+        const LONG zone = static_cast<LONG>(Filmstrip::kHotZoneH * DpiScale());
+        if (pt.y >= h - zone && pt.y <= h) RevealFilmstrip();
+    }
+}
+
+void App::RevealFilmstrip() {
+    filmstrip_.Show();
+    filmstripGeomLogged_ = false;
+    Log(L"filmstrip: show");
+    ScheduleThumbs();
+    DrawNow();
+}
+
+void App::HideFilmstrip() {
+    filmstrip_.Hide();
+    ++thumbGen_; // in-flight thumbnail results become stale
+    Log(L"filmstrip: hide");
+    DrawNow();
+}
+
+void App::GoToIndex(int target) {
+    if (!navReady_ || !navResult_ || target < 0 ||
+        target >= static_cast<int>(navResult_->files.size())) {
+        return;
+    }
+    if (target == displayIndex_ && targetIndex_ < 0) return; // already there
+    lastNavDirection_ = (target > displayIndex_) ? 1 : -1;
+    StartNavigation(navResult_->files[target], target);
+}
+
+void App::ScheduleThumbs() {
+    if (!filmstrip_.Visible() || !navReady_ || !navResult_ || displayIndex_ < 0) return;
+    const int count = static_cast<int>(navResult_->files.size());
+    if (count == 0) return;
+    const UINT maxDim = static_cast<UINT>(Filmstrip::kThumbH * DpiScale());
+    const int start = filmstrip_.VisibleStart();
+    const int end = start + filmstrip_.VisibleCount();
+    for (int i = start - 1; i <= end; ++i) {
+        if (i < 0 || i >= count) continue;
+        const std::wstring& path = navResult_->files[i];
+        if (thumbCache_->Contains(path) || ThumbFailedContains(thumbFailed_, path)) continue;
+        const uint64_t gen = ++thumbGen_;
+        thumbLoader_->RequestThumb(gen, path, maxDim);
+        Log(std::format(L"thumb: request gen={} idx={}", gen, i));
+        return; // one thumbnail job at a time (latest-wins)
+    }
+}
+
+void App::OnThumbDone(uint64_t gen) {
+    auto res = thumbLoader_->TakeResult(gen);
+    if (!res) return;
+    if (gen != thumbGen_) {
+        Log(std::format(L"thumb: stale gen={} ignored", gen));
+        return;
+    }
+    if (res->failed || !res->pixels) {
+        // Record the failure so a broken file is never retried forever.
+        if (thumbFailed_.size() >= kMaxThumbFailed) thumbFailed_.erase(thumbFailed_.begin());
+        thumbFailed_.push_back(res->path);
+        Log(std::format(L"thumb: failed gen={} {}", gen, res->path));
+        ScheduleThumbs();
+        return;
+    }
+    auto& px = res->pixels;
+    auto img = std::make_shared<DecodedImage>();
+    img->path = res->path;
+    img->width = px->width;
+    img->height = px->height;
+    img->estimateBytes = px->estimateBytes;
+    img->bitmap = renderer_->CreateBitmapFromPixels(px->width, px->height,
+                                                    px->pixels.data(), px->stride);
+    if (!img->bitmap) {
+        Log(std::format(L"thumb: bitmap failed gen={}", gen));
+        ScheduleThumbs();
+        return;
+    }
+    thumbCache_->Insert(img, false);
+    const uint64_t evicted = thumbCache_->EvictOld();
+    Log(std::format(L"thumb: done gen={} {} est={:.0f}KB cache={:.1f}MB evicts={}",
+                    gen, FileNameOf(res->path), img->estimateBytes / 1024.0,
+                    thumbCache_->Bytes() / kMiB, thumbCache_->Evictions()));
+    if (evicted) Log(std::format(L"thumb: evict {:.0f}KB", evicted / 1024.0));
+    DrawNow();
+    ScheduleThumbs();
+}
+
+std::wstring App::BuildInfoText() {
+    std::wstring dims = L"?x?";
+    if (hasImage_ && current_) {
+        dims = std::format(L"{}x{}", current_->width, current_->height);
+    }
+    const int idx = displayIndex_ + 1;
+    const int total = (navReady_ && navResult_)
+                          ? static_cast<int>(navResult_->files.size())
+                          : 0;
+    return std::format(L"{}  {}  {} / {}", FileNameOf(currentPath_), dims, idx, total);
+}
+
+void App::BuildFilmstripDraw(FilmstripDraw& out) {
+    out.visible = filmstrip_.Visible();
+    if (!out.visible) return;
+    out.stripRect = filmstrip_.StripRect();
+    out.infoText = BuildInfoText();
+    const auto& cells = filmstrip_.Cells();
+    out.cells.reserve(cells.size());
+    for (const auto& c : cells) {
+        ThumbCellDraw d;
+        d.index = c.index;
+        d.rect = c.rect;
+        d.isCurrent = c.isCurrent;
+        if (navReady_ && navResult_ && c.index >= 0 &&
+            c.index < static_cast<int>(navResult_->files.size())) {
+            auto cached = thumbCache_->Get(navResult_->files[c.index]);
+            if (cached) d.bitmap = cached->bitmap.Get();
+        }
+        out.cells.push_back(d);
+    }
 }
 
 // --- actions ---------------------------------------------------------------

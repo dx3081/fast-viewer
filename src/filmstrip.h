@@ -13,14 +13,15 @@ struct ThumbCell {
 
 // Filmstrip state + layout (UI thread only; rendering happens in Renderer).
 // Constants are centralized here as future viewer.conf candidates.
+// RC polish: smaller strip (68 px thumbnails), current cell visually centered.
 class Filmstrip {
 public:
     static constexpr float kHotZoneH = 24.0f;  // bottom activation zone, logical px
-    static constexpr float kThumbH = 96.0f;    // thumbnail cell height, logical px
-    static constexpr float kThumbW = 120.0f;   // thumbnail cell width, logical px
-    static constexpr float kGap = 8.0f;
-    static constexpr float kMargin = 16.0f;
-    static constexpr float kPadding = 8.0f;    // strip padding above/below cells
+    static constexpr float kThumbH = 68.0f;    // thumbnail cell height, logical px
+    static constexpr float kThumbW = 92.0f;    // thumbnail cell width, logical px
+    static constexpr float kGap = 6.0f;
+    static constexpr float kMargin = 12.0f;
+    static constexpr float kPadding = 6.0f;    // strip padding above/below cells
     static constexpr UINT kHideDelayMs = 600;
     static constexpr int kMaxVisible = 11;
     static constexpr int kMinVisible = 5;

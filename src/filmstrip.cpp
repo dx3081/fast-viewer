@@ -15,6 +15,7 @@ void Filmstrip::Update(UINT clientW, UINT clientH, float dpiScale, int count,
     const float margin = kMargin * dpiScale;
     const float pad = kPadding * dpiScale;
     const float stripH = cellH + 2.0f * pad;
+    const float pitch = cellW + gap;
 
     stripRect_ = D2D1::RectF(0.0f, static_cast<FLOAT>(clientH) - stripH,
                              static_cast<FLOAT>(clientW), static_cast<FLOAT>(clientH));
@@ -24,21 +25,37 @@ void Filmstrip::Update(UINT clientW, UINT clientH, float dpiScale, int count,
     }
 
     const float usable = static_cast<float>(clientW) - 2.0f * margin;
-    int visible = static_cast<int>((usable + gap) / (cellW + gap));
+    int visible = static_cast<int>((usable + gap) / pitch);
     visible = std::clamp(visible, kMinVisible, kMaxVisible);
     visible = std::min(visible, count);
 
-    // Center the current image; at directory ends the sequence aligns to the
-    // available side (no fake empty slots).
-    int start = currentIndex - (visible - 1) / 2;
+    // RC polish centering rule: the current image occupies the cell whose
+    // center aligns with the viewport's horizontal center whenever there are
+    // enough real images on both sides; at directory edges the row aligns
+    // naturally to the available side (no fake/blank cells, no wrap).
+    const int p = (visible - 1) / 2; // current position when centered
+    int start = currentIndex - p;
     start = std::clamp(start, 0, std::max(0, count - visible));
     visibleStart_ = start;
+
+    const int pos = currentIndex - start; // position of current within the row
+    const bool canCenter = (currentIndex >= p) && (currentIndex <= count - 1 - p);
+
+    float rowX;
+    if (canCenter) {
+        // center the CURRENT cell on the viewport center; neighbors shift around it
+        rowX = static_cast<float>(clientW) / 2.0f - cellW / 2.0f - pos * pitch;
+    } else if (start == 0) {
+        rowX = margin; // beginning: current near the left edge
+    } else {
+        rowX = static_cast<float>(clientW) - margin - (visible * pitch - gap); // end
+    }
 
     const float top = stripRect_.top + pad;
     for (int i = 0; i < visible; ++i) {
         ThumbCell cell;
         cell.index = start + i;
-        const float x = margin + i * (cellW + gap);
+        const float x = rowX + i * pitch;
         cell.rect = D2D1::RectF(x, top, x + cellW, top + cellH);
         cell.isCurrent = (cell.index == currentIndex);
         cells_.push_back(cell);

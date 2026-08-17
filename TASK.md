@@ -1,6 +1,39 @@
 # Fast Viewer — Task State
 
-Current phase: M2 — Picasa-style UX
+Current phase: RC UX POLISH (filmstrip layout only) — awaiting human visual review
+
+## RC UX polish status
+
+M2 is complete (commit 2742af2). RC UX POLISH refined the filmstrip layout to
+be smaller and less box/grid-like while preserving every interaction:
+
+- Thumbnails shrunk from 120x96 to **92x68 logical px**; strip total height is
+  now **80 logical px** (68 + 2 x 6 padding), down from ~108.
+- Gap 8 -> **6 logical px**; margins 16 -> **12 logical px**; padding 6 logical px.
+- Current image now **visually centers on the viewport center** whenever there
+  are enough real images on both sides (position p = (visible-1)/2 in a
+  clamped window of 5..11 cells); at directory edges the row aligns naturally
+  to the available side (no fake cells, no wrap).
+- Box/grid look removed: non-current cells have **no border**; the current cell
+  keeps a thin **1.5 px selection border** only; dark flat background + 1 px
+  top separator remain.
+- Info text (name / WxH / index-total) uses a smaller 12 px font and sits in
+  the 16 px band directly above the strip (stripRect.top-18 .. -2).
+- All interactions preserved: hot-zone reveal, 600 ms auto-hide with re-entry
+  cancellation, wheel-nav over the strip, wheel-zoom over the image, thumbnail
+  click navigation, pan, right-click close.
+- No performance regression: same worker/queue/cache architecture untouched.
+
+## RC polish layout values (final)
+
+- hot zone: bottom 24 logical px
+- thumbnail cells: 92 x 68 logical px
+- gap: 6 logical px; margins: 12 logical px; padding: 6 logical px
+- strip height: 68 + 2 x 6 = 80 logical px
+- visible cells: width-driven, clamped to 5..11
+- centering: current at position (visible-1)/2 when index >= p and
+  index <= count-1-p; otherwise left (start=0) or right alignment
+- constants centralized in filmstrip.h
 
 ## M2 status
 
@@ -30,11 +63,15 @@ Photo Viewer-style interaction layer on top of the already-fast core viewer.
 ## Filmstrip layout rules
 
 - hot zone: bottom 24 logical px; filmstrip height = thumbnail height
-  (96 logical px) + padding; thumbnail cells 120 x 96 logical px, 8 px gap,
-  16 px margins; visible cell count = width-driven, clamped to 5..11
-- constants centralized in filmstrip.h (future viewer.conf candidates)
-- current thumbnail marked with a brighter border only; dark flat background,
+  (68 logical px) + 2 x 6 padding = 80 logical px; thumbnail cells 92 x 68
+  logical px, 6 px gap, 12 px margins; visible cell count = width-driven,
+  clamped to 5..11
+- current thumbnail marked with a thin 1.5 px selection border only;
+  non-current cells have no border; dark flat background, 1 px top separator,
   no blur/glass/transparency effects
+- current image visually centered on the viewport center for mid-directory
+  positions; natural alignment at directory start/end (no fake slots, no wrap)
+- constants centralized in filmstrip.h (future viewer.conf candidates)
 
 ## M2 explicit exclusions
 
@@ -102,7 +139,16 @@ to prepare 1.0.
   and mid-directory, wheel-zoom unchanged, wheel-nav, thumbnail click, rapid
   clicks, right-click close, close during thumbnail load, hidden idle, bounded
   cache, 50k local-only, pan near bottom) - all pass
+- RC polish suite: 21 checks (centering at 5/100/250/494/500 + edges, strip
+  height <= 90 logical px, thumbnail height ~68 logical px, 1920-wide
+  centering, rapid-nav stationary) - all pass on the RC build
 - Regression: M0 50/50, M0.1 27/27, M1 26/26 - all pass on the M2 build
 
 After M2: STOP. No installer, no release, no M3. Human review decides whether
 to prepare 1.0.
+
+## After RC UX polish
+
+- RC polish (filmstrip layout only) committed; pushed to origin/main
+- Human visual inspection: Smaller/Centered/Less box/grid-like
+- Next authorized phase: NONE — awaiting human visual review

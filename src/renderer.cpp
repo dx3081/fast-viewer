@@ -142,10 +142,11 @@ D2D1_RECT_F FitRect(const D2D1_RECT_F& cell, UINT iw, UINT ih) {
 } // namespace
 
 void Renderer::DrawFilmstrip(const FilmstripDraw& fs) {
-    if (!stripBgBrush_ || !placeholderBrush_ || !borderBrush_ || !currentBorderBrush_) {
+    if (!stripBgBrush_ || !placeholderBrush_ || !currentBorderBrush_) {
         return;
     }
-    // Flat dark background + subtle top separator.
+    // Flat dark background + subtle top separator: the strip reads as one
+    // continuous surface, not a row of boxes (RC polish).
     target_->FillRectangle(fs.stripRect, stripBgBrush_.Get());
     target_->DrawLine(D2D1::Point2F(fs.stripRect.left, fs.stripRect.top),
                       D2D1::Point2F(fs.stripRect.right, fs.stripRect.top),
@@ -162,21 +163,22 @@ void Renderer::DrawFilmstrip(const FilmstripDraw& fs) {
             // Neutral placeholder while the thumbnail loads (or for failures).
             target_->FillRectangle(cell.rect, placeholderBrush_.Get());
         }
-        target_->DrawRectangle(cell.rect,
-                               cell.isCurrent ? currentBorderBrush_.Get() : borderBrush_.Get(),
-                               cell.isCurrent ? 2.0f : 1.0f);
+        // Only the current image gets a lightweight selection border.
+        if (cell.isCurrent) {
+            target_->DrawRectangle(cell.rect, currentBorderBrush_.Get(), 1.5f);
+        }
     }
 
     if (!fs.infoText.empty()) {
         EnsureText();
-        const D2D1_RECT_F rc = D2D1::RectF(fs.stripRect.left + 12.0f,
-                                           fs.stripRect.top - 24.0f,
-                                           fs.stripRect.right - 12.0f,
+        const D2D1_RECT_F rc = D2D1::RectF(fs.stripRect.left + 8.0f,
+                                           fs.stripRect.top - 18.0f,
+                                           fs.stripRect.right - 8.0f,
                                            fs.stripRect.top - 2.0f);
         if (rc.top >= 0.0f) {
             target_->DrawTextW(fs.infoText.c_str(),
                                static_cast<UINT32>(fs.infoText.size()),
-                               textFormat_.Get(), rc, textBrush_.Get());
+                               infoFormat_.Get(), rc, textBrush_.Get());
         }
     }
 }
@@ -189,5 +191,13 @@ void Renderer::EnsureText() {
     if (textFormat_) {
         textFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
         textFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    }
+    // Small info line for the filmstrip (kept secondary to the thumbnails).
+    dwriteFactory_->CreateTextFormat(
+        L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
+        DWRITE_FONT_STRETCH_NORMAL, 12.0f, L"", &infoFormat_);
+    if (infoFormat_) {
+        infoFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+        infoFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
     }
 }

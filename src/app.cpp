@@ -327,15 +327,21 @@ void App::DrawNow() {
             lastInfoText_ = fs.infoText;
             Log(std::format(L"filmstrip: info {}", fs.infoText));
         }
-        if (!filmstripGeomLogged_) {
-            filmstripGeomLogged_ = true;
-            const float dpi = DpiScale();
+        float curCx = -1.0f;
+        for (const auto& c : filmstrip_.Cells()) {
+            if (c.isCurrent) curCx = (c.rect.left + c.rect.right) / 2.0f;
+        }
+        const float dpi = DpiScale();
+        const std::wstring key = std::format(L"{}|{}|{:.0f}", filmstrip_.VisibleStart(),
+                                             filmstrip_.VisibleCount(), curCx);
+        if (key != lastGeomKey_) {
+            lastGeomKey_ = key;
             Log(std::format(
-                L"filmstrip: geometry start={} count={} cellw={:.0f} cellh={:.0f} gap={:.0f} margin={:.0f} top={:.0f} striph={:.0f}",
+                L"filmstrip: geometry start={} count={} cellw={:.0f} cellh={:.0f} gap={:.0f} margin={:.0f} top={:.0f} striph={:.0f} curcx={:.1f}",
                 filmstrip_.VisibleStart(), filmstrip_.VisibleCount(),
                 Filmstrip::kThumbW * dpi, Filmstrip::kThumbH * dpi,
                 Filmstrip::kGap * dpi, Filmstrip::kMargin * dpi, fs.stripRect.top,
-                fs.stripRect.bottom - fs.stripRect.top));
+                fs.stripRect.bottom - fs.stripRect.top, curCx));
         }
     }
 }
@@ -637,7 +643,7 @@ void App::TrackFilmstripPointer(POINT pt) {
 
 void App::RevealFilmstrip() {
     filmstrip_.Show();
-    filmstripGeomLogged_ = false;
+    lastGeomKey_.clear();
     Log(L"filmstrip: show");
     ScheduleThumbs();
     DrawNow();

@@ -64,4 +64,5 @@ private:
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> currentBorderBrush_;
     Microsoft::WRL::ComPtr<IDWriteFactory> dwriteFactory_;
     Microsoft::WRL::ComPtr<IDWriteTextFormat> textFormat_;
+    Microsoft::WRL::ComPtr<IDWriteTextFormat> infoFormat_;
 };

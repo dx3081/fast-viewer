@@ -91,7 +91,7 @@ private:
     Filmstrip filmstrip_;
     uint64_t thumbGen_ = 0;
     bool hideTimerRunning_ = false;
-    bool filmstripGeomLogged_ = false;
+    std::wstring lastGeomKey_;
     std::wstring lastInfoText_;
     std::vector<std::wstring> thumbFailed_; // bounded set: no infinite retry of broken files
 

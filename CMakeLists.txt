@@ -22,6 +22,10 @@ add_executable(fast_viewer WIN32
     src/navigation.h
     src/input.cpp
     src/input.h
+    src/cache.cpp
+    src/cache.h
+    src/decoder.cpp
+    src/decoder.h
 )
 
 target_compile_options(fast_viewer PRIVATE

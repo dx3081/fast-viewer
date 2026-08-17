@@ -3,6 +3,7 @@
 #include <windowsx.h>
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <format>
 #include <string_view>
 
@@ -15,6 +16,7 @@ constexpr UINT kMsgScanDone = WM_APP + 1;
 constexpr float kZoomFactorPerNotch = 1.25f;
 constexpr float kMaxZoom = 16.0f;
 constexpr float kMinZoomSafety = 0.01f;
+constexpr double kMiB = 1024.0 * 1024.0;
 
 } // namespace
 
@@ -47,6 +49,7 @@ std::wstring FileNameOf(const std::wstring& path) {
 
 App::~App() {
     DebugMark(L"app dtor begin");
+    decoder_->Stop();
     DebugMark(L"app dtor end");
 }
 
@@ -55,20 +58,20 @@ bool App::Initialize(HINSTANCE inst, const std::wstring& imagePath) {
     t0Micros_ = NowMicros();
     InitTimingLog();
 
-    HRESULT hr = CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
-                                  IID_PPV_ARGS(&wic_));
-    if (FAILED(hr)) return false;
-
     if (!window_.Create(inst, FileNameOf(imagePath), this)) return false;
     hwnd_ = window_.Hwnd();
 
     renderer_ = std::make_unique<Renderer>();
     if (!renderer_->Initialize(hwnd_)) return false;
 
+    decoder_ = std::make_unique<ImageDecoder>();
+    decoder_->Start(hwnd_);
+    cache_ = std::make_unique<ImageCache>();
     nav_ = std::make_unique<Navigation>();
 
-    // First image display must not wait for directory discovery.
-    LoadImage(imagePath);
+    // First image display must not wait for directory discovery or any decode
+    // on the UI thread: the initial decode runs on the decode worker.
+    RequestUserDecode(imagePath, -1, false);
     ShowWindow(hwnd_, SW_SHOW);
     UpdateWindow(hwnd_);
 
@@ -92,6 +95,19 @@ LRESULT App::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
     case WM_SIZE: {
         const UINT w = LOWORD(lParam);
         const UINT h = HIWORD(lParam);
+        if (wParam == SIZE_MINIMIZED) {
+            if (!minimized_) {
+                minimized_ = true;
+                // Invalidate any in-flight preload; do not start new ones.
+                latestPreloadId_ = ++nextRequestId_;
+                preloadPathPending_.clear();
+                Log(L"minimized");
+            }
+        } else if (wParam == SIZE_RESTORED && minimized_) {
+            minimized_ = false;
+            Log(L"restored");
+            SchedulePreload();
+        }
         if (renderer_) {
             renderer_->Resize(w, h);
             if (viewMode_ == ViewMode::Fit) {
@@ -136,6 +152,12 @@ LRESULT App::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
     case kMsgScanDone:
         OnScanComplete();
         return 0;
+    case kMsgDecodeDone:
+        OnDecodeDone(static_cast<uint64_t>(wParam));
+        return 0;
+    case kMsgPreloadDone:
+        OnPreloadDone(static_cast<uint64_t>(wParam));
+        return 0;
     case WM_DESTROY:
         DebugMark(L"wm_destroy");
         window_.SaveNormalRect();
@@ -169,56 +191,13 @@ LRESULT App::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
 
 // --- image / view ---------------------------------------------------------
 
-void App::LoadImage(const std::wstring& path) {
-    const long long t = NowMicros();
-
-    HRESULT hr = S_OK;
-    auto decoded = DecodeImage(wic_.Get(), path, &hr);
-    if (!decoded) {
-        hasImage_ = false;
-        errorState_ = true;
-        errorText_ = std::format(L"Cannot display this image.\n{}", path);
-        currentPath_ = path;
-        image_.Reset();
-        loaded_.reset();
-        Log(std::format(L"error: {} hr=0x{:08X}", path, static_cast<unsigned>(hr)));
-        DrawNow();
-        return;
-    }
-
-    image_ = renderer_->CreateBitmap(decoded->source.Get(), &hr);
-    if (!image_) {
-        hasImage_ = false;
-        errorState_ = true;
-        errorText_ = std::format(L"Cannot display this image.\n{}", path);
-        currentPath_ = path;
-        loaded_.reset();
-        Log(std::format(L"error: {} bitmap hr=0x{:08X}", path, static_cast<unsigned>(hr)));
-        DrawNow();
-        return;
-    }
-
-    loaded_ = std::move(decoded);
-    hasImage_ = true;
-    errorState_ = false;
-    errorText_.clear();
-    currentPath_ = path;
-
-    Log(std::format(L"decode_ms={:.1f} {}x{} orient={} {}", (NowMicros() - t) / 1000.0,
-                    loaded_->width, loaded_->height, loaded_->orientation, path));
-
-    ResetViewToFit();
-    DrawNow();
-}
-
 void App::ComputeFit() {
     fitScale_ = 1.0f;
-    if (!hasImage_ || !image_) return;
+    if (!hasImage_ || !current_ || !current_->bitmap) return;
     const float vw = static_cast<float>(renderer_->Width());
     const float vh = static_cast<float>(renderer_->Height());
-    const D2D1_SIZE_F size = image_->GetSize();
-    const float iw = size.width;
-    const float ih = size.height;
+    const float iw = static_cast<float>(current_->width);
+    const float ih = static_cast<float>(current_->height);
     if (vw <= 0.0f || vh <= 0.0f || iw <= 0.0f || ih <= 0.0f) return;
     const float s = std::min(vw / iw, vh / ih);
     fitScale_ = std::min(s, 1.0f); // never upscale small images
@@ -234,20 +213,34 @@ void App::ResetViewToFit() {
     LogView();
 }
 
+void App::ComputeTransform(ViewTransform& view) const {
+    view.scale = scale_;
+    if (hasImage_ && current_ && current_->bitmap) {
+        const float vw = static_cast<float>(renderer_->Width());
+        const float vh = static_cast<float>(renderer_->Height());
+        const float iw = static_cast<float>(current_->width);
+        const float ih = static_cast<float>(current_->height);
+        view.offsetX = (vw - iw * scale_) / 2.0f + panX_;
+        view.offsetY = (vh - ih * scale_) / 2.0f + panY_;
+    } else {
+        view.offsetX = 0.0f;
+        view.offsetY = 0.0f;
+    }
+}
+
 // M0.1: deterministic pan clamping. Per axis: if the scaled image fits the
 // viewport it stays centered (axis locked); otherwise pan is limited so every
 // image edge/corner is reachable but overscroll into empty background is not.
 void App::ClampPan() {
-    if (!hasImage_ || !image_) {
+    if (!hasImage_ || !current_ || !current_->bitmap) {
         panX_ = 0.0f;
         panY_ = 0.0f;
         return;
     }
     const float vw = static_cast<float>(renderer_->Width());
     const float vh = static_cast<float>(renderer_->Height());
-    const D2D1_SIZE_F size = image_->GetSize();
-    const float iw = size.width;
-    const float ih = size.height;
+    const float iw = static_cast<float>(current_->width);
+    const float ih = static_cast<float>(current_->height);
 
     const float excessX = iw * scale_ - vw;
     const float excessY = ih * scale_ - vh;
@@ -263,41 +256,270 @@ void App::ClampPan() {
     }
 }
 
-void App::ComputeTransform(ViewTransform& view) const {
-    view.scale = scale_;
-    if (hasImage_ && image_) {
-        const D2D1_SIZE_F size = image_->GetSize();
-        const float vw = static_cast<float>(renderer_->Width());
-        const float vh = static_cast<float>(renderer_->Height());
-        view.offsetX = (vw - size.width * scale_) / 2.0f + panX_;
-        view.offsetY = (vh - size.height * scale_) / 2.0f + panY_;
-    } else {
-        view.offsetX = 0.0f;
-        view.offsetY = 0.0f;
-    }
-}
-
 void App::DrawNow() {
     if (!renderer_) return;
     ViewTransform view;
     ComputeTransform(view);
-    renderer_->Render(image_.Get(), view, errorState_, errorText_);
-
-    if (!firstRenderLogged_ && hasImage_) {
-        firstRenderLogged_ = true;
-        Log(std::format(L"first_render_ms={:.1f}", ElapsedMs()));
-    }
+    renderer_->Render(current_ ? current_->bitmap.Get() : nullptr, view,
+                      errorState_, errorText_);
 }
 
 void App::LogView() {
     Log(std::format(L"view: scale={:.4f} offset=({:.1f},{:.1f}) pan=({:.1f},{:.1f}) mode={}",
                     scale_,
-                    (hasImage_ ? (renderer_->Width() - image_->GetSize().width * scale_) / 2.0f + panX_ : 0.0f),
-                    (hasImage_ ? (renderer_->Height() - image_->GetSize().height * scale_) / 2.0f + panY_ : 0.0f),
+                    (hasImage_ && current_
+                         ? (renderer_->Width() - static_cast<float>(current_->width) * scale_) / 2.0f + panX_
+                         : 0.0f),
+                    (hasImage_ && current_
+                         ? (renderer_->Height() - static_cast<float>(current_->height) * scale_) / 2.0f + panY_
+                         : 0.0f),
                     panX_, panY_,
                     viewMode_ == ViewMode::Fit ? L"Fit"
                     : viewMode_ == ViewMode::Percent100 ? L"100"
                                                         : L"Custom"));
+}
+
+// --- navigation / async decode --------------------------------------------
+
+void App::Navigate(int delta) {
+    if (!navReady_ || !navResult_ || navResult_->files.empty()) {
+        pendingDelta_ += delta; // applied when the directory scan completes
+        return;
+    }
+    const int idx = navResult_->index;
+    if (idx < 0) return; // launched file is not in the navigable set
+
+    const int base = (targetIndex_ >= 0) ? targetIndex_
+                    : (displayIndex_ >= 0) ? displayIndex_
+                                           : idx;
+    const int target = base + delta;
+    if (target < 0 || target >= static_cast<int>(navResult_->files.size())) {
+        return; // no wrap-around
+    }
+    lastNavDirection_ = delta;
+    StartNavigation(navResult_->files[target], target);
+}
+
+void App::StartNavigation(const std::wstring& path, int target) {
+    if (auto cached = cache_->Get(path)) {
+        Log(std::format(L"cache: hit {}", path));
+        navLogPending_ = true;
+        requestT0Micros_ = NowMicros();
+        DisplayImage(cached, target, true, 0);
+    } else {
+        Log(std::format(L"cache: miss {}", path));
+        RequestUserDecode(path, target, true);
+    }
+}
+
+void App::RequestUserDecode(const std::wstring& path, int index, bool navLog) {
+    targetIndex_ = index;
+    const uint64_t id = ++nextRequestId_;
+    latestUserRequestId_ = id;
+    requestT0Micros_ = NowMicros();
+    navLogPending_ = navLog;
+    decoder_->RequestDecode(id, path);
+    Log(std::format(L"decode: request id={} idx={}", id, index));
+}
+
+void App::OnScanComplete() {
+    navResult_ = nav_->TakeResult();
+    navReady_ = true;
+    if (displayIndex_ < 0) displayIndex_ = navResult_->index;
+    Log(std::format(L"scan: count={} index={} ms={:.1f}",
+                    static_cast<int>(navResult_->files.size()), navResult_->index,
+                    navResult_->scanMicros / 1000.0));
+    if (pendingDelta_ != 0) {
+        const int d = pendingDelta_;
+        pendingDelta_ = 0;
+        const int base = (targetIndex_ >= 0) ? targetIndex_ : displayIndex_;
+        const int target = base + d;
+        if (target >= 0 && target < static_cast<int>(navResult_->files.size())) {
+            lastNavDirection_ = d > 0 ? 1 : -1;
+            StartNavigation(navResult_->files[target], target);
+        }
+    } else {
+        SchedulePreload();
+    }
+}
+
+void App::OnDecodeDone(uint64_t id) {
+    auto res = decoder_->TakeResult(id);
+    if (!res) return;
+
+    if (id != latestUserRequestId_) {
+        Log(std::format(L"decode: stale id={} ignored", id));
+        return;
+    }
+    const int targetIdx = targetIndex_;
+    targetIndex_ = -1;
+
+    if (res->failed) {
+        if (targetIdx >= 0) displayIndex_ = targetIdx;
+        ShowFailure(res->path, res->hr, res->decodeMicros);
+        if (navLogPending_) {
+            navLogPending_ = false;
+            Log(std::format(L"nav: {} idx={} id={} total_ms={:.1f} (failed)",
+                            lastNavDirection_ > 0 ? L"next" : L"prev", displayIndex_, id,
+                            (NowMicros() - requestT0Micros_) / 1000.0));
+        }
+        SchedulePreload();
+        return;
+    }
+
+    auto& px = res->pixels;
+    auto img = std::make_shared<DecodedImage>();
+    img->path = res->path;
+    img->width = px->width;
+    img->height = px->height;
+    img->estimateBytes = px->estimateBytes;
+    img->bitmap = renderer_->CreateBitmapFromPixels(px->width, px->height,
+                                                    px->pixels.data(), px->stride);
+    if (!img->bitmap) {
+        ShowFailure(res->path, E_FAIL, res->decodeMicros);
+        return;
+    }
+
+    Log(std::format(L"decode_ms={:.1f} {}x{} orient={} {}", res->decodeMicros / 1000.0,
+                    px->width, px->height, px->orientation, res->path));
+    DisplayImage(img, targetIdx, navLogPending_, id);
+}
+
+void App::DisplayImage(const std::shared_ptr<DecodedImage>& img, int index,
+                       bool navLog, uint64_t id) {
+    cache_->UnpinAll();
+    cache_->Insert(img, true); // current image pinned
+    const uint64_t evicted = cache_->EvictOld();
+    if (evicted) {
+        Log(std::format(L"cache: evict {:.0f}MB cache={:.0f}MB evicts={}", evicted / kMiB,
+                        cache_->Bytes() / kMiB, cache_->Evictions()));
+    }
+
+    current_ = img;
+    currentPath_ = img->path;
+    hasImage_ = true;
+    errorState_ = false;
+    errorText_.clear();
+
+    if (index >= 0) displayIndex_ = index;
+    if (navResult_ && displayIndex_ < 0) displayIndex_ = navResult_->index;
+    targetIndex_ = -1;
+
+    if (!firstRenderLogged_) {
+        firstRenderLogged_ = true;
+        Log(std::format(L"first_render_ms={:.1f}", ElapsedMs()));
+    }
+    if (navLog) {
+        navLogPending_ = false;
+        Log(std::format(L"nav: {} idx={} id={} total_ms={:.1f}",
+                        lastNavDirection_ > 0 ? L"next" : L"prev", displayIndex_, id,
+                        (NowMicros() - requestT0Micros_) / 1000.0));
+    }
+
+    ResetViewToFit();
+    DrawNow();
+    SchedulePreload();
+}
+
+void App::OnPreloadDone(uint64_t id) {
+    auto res = decoder_->TakeResult(id);
+    if (!res) return;
+    if (id != latestPreloadId_) {
+        Log(std::format(L"preload: stale id={} dropped", id));
+        return;
+    }
+    preloadPathPending_.clear();
+    if (res->budgetExceeded) {
+        Log(L"preload: skipped budget (estimate exceeds usable budget)");
+        return;
+    }
+    if (res->failed) {
+        Log(std::format(L"preload: failed id={} {}", id, res->path));
+        return;
+    }
+    if (!IsNearby(res->path)) {
+        Log(std::format(L"preload: dropped (moved away) id={}", id));
+        return;
+    }
+
+    auto& px = res->pixels;
+    auto img = std::make_shared<DecodedImage>();
+    img->path = res->path;
+    img->width = px->width;
+    img->height = px->height;
+    img->estimateBytes = px->estimateBytes;
+    img->bitmap = renderer_->CreateBitmapFromPixels(px->width, px->height,
+                                                    px->pixels.data(), px->stride);
+    if (!img->bitmap) {
+        Log(std::format(L"preload: bitmap create failed id={}", id));
+        return;
+    }
+    cache_->Insert(img, false);
+    const uint64_t evicted = cache_->EvictOld();
+    if (evicted) {
+        Log(std::format(L"cache: evict {:.0f}MB cache={:.0f}MB evicts={}", evicted / kMiB,
+                        cache_->Bytes() / kMiB, cache_->Evictions()));
+    }
+    Log(std::format(L"preload: done id={} est={:.0f}MB cache={:.0f}MB evicts={}",
+                    id, img->estimateBytes / kMiB, cache_->Bytes() / kMiB,
+                    cache_->Evictions()));
+}
+
+void App::SchedulePreload() {
+    if (minimized_) {
+        Log(L"preload: skipped minimized");
+        return;
+    }
+    if (targetIndex_ >= 0) return; // a user request is in flight
+    if (!navReady_ || !navResult_ || displayIndex_ < 0) return;
+    const int count = static_cast<int>(navResult_->files.size());
+    if (count == 0) return;
+
+    int candidates[3];
+    int nc = 0;
+    auto add = [&](int i) {
+        if (i >= 0 && i < count) candidates[nc++] = i;
+    };
+    add(displayIndex_ - 1);
+    add(displayIndex_ + 1);
+    if (lastNavDirection_ > 0) add(displayIndex_ + 2);
+    if (lastNavDirection_ < 0) add(displayIndex_ - 2);
+
+    for (int i = 0; i < nc; ++i) {
+        const int idx = candidates[i];
+        const std::wstring& path = navResult_->files[idx];
+        if (cache_->Contains(path)) continue;
+        if (!preloadPathPending_.empty() && preloadPathPending_ == path) continue;
+        const uint64_t id = ++nextRequestId_;
+        latestPreloadId_ = id;
+        preloadPathPending_ = path;
+        decoder_->RequestPreload(id, path, cache_->Bytes(),
+                                 current_ ? current_->estimateBytes : 0);
+        Log(std::format(L"preload: request id={} idx={} cache={:.0f}MB", id, idx,
+                        cache_->Bytes() / kMiB));
+        return; // one preload at a time
+    }
+}
+
+bool App::IsNearby(const std::wstring& path) const {
+    if (!navReady_ || !navResult_ || displayIndex_ < 0) return false;
+    const int count = static_cast<int>(navResult_->files.size());
+    for (int d = -2; d <= 2; ++d) {
+        const int i = displayIndex_ + d;
+        if (i >= 0 && i < count && navResult_->files[i] == path) return true;
+    }
+    return false;
+}
+
+void App::ShowFailure(const std::wstring& path, HRESULT hr, uint64_t decodeMicros) {
+    hasImage_ = false;
+    errorState_ = true;
+    errorText_ = std::format(L"Cannot display this image.\n{}", path);
+    currentPath_ = path;
+    current_.reset();
+    Log(std::format(L"error: {} hr=0x{:08X} decode_ms={:.1f}", path,
+                    static_cast<unsigned>(hr), decodeMicros / 1000.0));
+    DrawNow();
 }
 
 // --- actions ---------------------------------------------------------------
@@ -313,7 +535,7 @@ void App::ToggleMode() {
 }
 
 void App::Toggle100Percent() {
-    if (!hasImage_ || !image_) return;
+    if (!hasImage_ || !current_) return;
     if (viewMode_ == ViewMode::Percent100) {
         ResetViewToFit();
     } else {
@@ -328,19 +550,15 @@ void App::Toggle100Percent() {
 }
 
 void App::ZoomAt(POINT clientPt, int wheelDelta) {
-    if (!hasImage_ || !image_) return;
+    if (!hasImage_ || !current_) return;
     const float vw = static_cast<float>(renderer_->Width());
     const float vh = static_cast<float>(renderer_->Height());
     if (vw <= 0.0f || vh <= 0.0f) return;
-    const D2D1_SIZE_F size = image_->GetSize();
-    const float iw = size.width;
-    const float ih = size.height;
+    const float iw = static_cast<float>(current_->width);
+    const float ih = static_cast<float>(current_->height);
 
-    // Current screen position of the image origin.
     const float curOffX = (vw - iw * scale_) / 2.0f + panX_;
     const float curOffY = (vh - ih * scale_) / 2.0f + panY_;
-
-    // Image-space point under the cursor.
     const float imgX = (static_cast<float>(clientPt.x) - curOffX) / scale_;
     const float imgY = (static_cast<float>(clientPt.y) - curOffY) / scale_;
 
@@ -350,7 +568,6 @@ void App::ZoomAt(POINT clientPt, int wheelDelta) {
     const float maxScale = std::max(kMaxZoom, fitScale_ * 8.0f);
     newScale = std::clamp(newScale, minScale, maxScale);
 
-    // Keep the image point under the cursor fixed.
     const float newOffX = static_cast<float>(clientPt.x) - imgX * newScale;
     const float newOffY = static_cast<float>(clientPt.y) - imgY * newScale;
 
@@ -366,7 +583,7 @@ void App::ZoomAt(POINT clientPt, int wheelDelta) {
 }
 
 void App::PanBegin(POINT clientPt) {
-    if (!hasImage_ || !image_) return;
+    if (!hasImage_ || !current_) return;
     panning_ = true;
     panLast_ = clientPt;
     SetCapture(hwnd_);
@@ -386,40 +603,6 @@ void App::PanEnd() {
     if (!panning_) return;
     panning_ = false;
     ReleaseCapture();
-}
-
-void App::Navigate(int delta) {
-    if (!navReady_ || !navResult_ || navResult_->files.empty()) {
-        pendingDelta_ += delta; // applied when the directory scan completes
-        return;
-    }
-    const int idx = navResult_->index;
-    if (idx < 0) return; // launched file is not in the navigable set
-
-    const int target = idx + delta;
-    if (target < 0 || target >= static_cast<int>(navResult_->files.size())) {
-        return; // no wrap-around
-    }
-
-    const long long t = NowMicros();
-    navResult_->index = target;
-    LoadImage(navResult_->files[target]);
-    Log(std::format(L"nav: {} idx={} total_ms={:.1f}",
-                    delta > 0 ? L"next" : L"prev", target,
-                    (NowMicros() - t) / 1000.0));
-}
-
-void App::OnScanComplete() {
-    navResult_ = nav_->TakeResult();
-    navReady_ = true;
-    Log(std::format(L"scan: count={} index={} ms={:.1f}",
-                    static_cast<int>(navResult_->files.size()), navResult_->index,
-                    navResult_->scanMicros / 1000.0));
-    if (pendingDelta_ != 0) {
-        const int d = pendingDelta_;
-        pendingDelta_ = 0;
-        Navigate(d);
-    }
 }
 
 // --- instrumentation -------------------------------------------------------

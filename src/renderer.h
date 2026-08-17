@@ -2,7 +2,6 @@
 #include <windows.h>
 #include <d2d1.h>
 #include <dwrite.h>
-#include <wincodec.h>
 #include <wrl/client.h>
 #include <string>
 
@@ -23,8 +22,8 @@ public:
     UINT Width() const { return width_; }
     UINT Height() const { return height_; }
 
-    Microsoft::WRL::ComPtr<ID2D1Bitmap> CreateBitmap(IWICBitmapSource* source,
-                                                     HRESULT* outHr = nullptr);
+    Microsoft::WRL::ComPtr<ID2D1Bitmap> CreateBitmapFromPixels(UINT width, UINT height,
+                                                               const void* data, UINT stride);
 
     void Render(ID2D1Bitmap* image, const ViewTransform& view,
                 bool hasError, const std::wstring& errorText);

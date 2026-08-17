@@ -2,6 +2,7 @@
 
 #include <propidl.h>
 #include <cwctype>
+#include <new>
 
 namespace {
 
@@ -41,14 +42,37 @@ WICBitmapTransformOptions OrientationTransform(int orientation) {
     }
 }
 
+bool SizeRejected(UINT w, UINT h, uint64_t maxBytes, HRESULT* outHr,
+                  bool* outBudgetExceeded) {
+    if (w == 0 || h == 0 || w > kMaxImageDimension || h > kMaxImageDimension) {
+        if (outHr) *outHr = HRESULT_FROM_WIN32(ERROR_FILE_TOO_LARGE);
+        return true;
+    }
+    const uint64_t pixels = static_cast<uint64_t>(w) * static_cast<uint64_t>(h);
+    if (pixels / static_cast<uint64_t>(w) != static_cast<uint64_t>(h)) {
+        if (outHr) *outHr = HRESULT_FROM_WIN32(ERROR_FILE_TOO_LARGE);
+        return true;
+    }
+    const uint64_t bytes = pixels * 4ULL;
+    if (bytes > maxBytes) {
+        if (outBudgetExceeded) *outBudgetExceeded = true;
+        if (outHr) *outHr = HRESULT_FROM_WIN32(ERROR_FILE_TOO_LARGE);
+        return true;
+    }
+    return false;
+}
+
 } // namespace
 
-std::shared_ptr<DecodedSource> DecodeImage(IWICImagingFactory* factory,
-                                           const std::wstring& path,
-                                           HRESULT* outHr) {
+std::shared_ptr<DecodedPixels> DecodeToPixels(IWICImagingFactory* factory,
+                                              const std::wstring& path,
+                                              uint64_t maxBytes,
+                                              HRESULT* outHr,
+                                              bool* outBudgetExceeded) {
     if (outHr) *outHr = S_OK;
+    if (outBudgetExceeded) *outBudgetExceeded = false;
     if (!factory) return nullptr;
-    auto result = std::make_shared<DecodedSource>();
+    auto result = std::make_shared<DecodedPixels>();
 
     Microsoft::WRL::ComPtr<IWICBitmapDecoder> decoder;
     HRESULT hr = factory->CreateDecoderFromFilename(
@@ -61,56 +85,57 @@ std::shared_ptr<DecodedSource> DecodeImage(IWICImagingFactory* factory,
 
     UINT sw = 0, sh = 0;
     hr = frame->GetSize(&sw, &sh);
-    if (FAILED(hr) || sw == 0 || sh == 0) { if (outHr) *outHr = hr; return nullptr; }
-
-    // Huge-image safety (M0.1): reject before any large allocation is
-    // attempted. Dimension cap first (also bounds the byte math below).
-    if (sw == 0 || sh == 0 || sw > kMaxImageDimension || sh > kMaxImageDimension) {
-        if (outHr) *outHr = HRESULT_FROM_WIN32(ERROR_FILE_TOO_LARGE);
-        return nullptr;
-    }
-    // Overflow-safe decoded-memory estimate (32bpp BGRA, 4 bytes/pixel).
-    // sw/sh are UINT and capped at 16384, so the products cannot overflow
-    // UINT64; the division check is kept for defensive clarity.
-    const UINT64 pixels = static_cast<UINT64>(sw) * static_cast<UINT64>(sh);
-    if (pixels / static_cast<UINT64>(sw) != static_cast<UINT64>(sh)) {
-        if (outHr) *outHr = HRESULT_FROM_WIN32(ERROR_FILE_TOO_LARGE);
-        return nullptr;
-    }
-    const UINT64 decodedBytes = pixels * 4ULL;
-    if (decodedBytes > kMaxDecodedBytes) {
-        if (outHr) *outHr = HRESULT_FROM_WIN32(ERROR_FILE_TOO_LARGE);
-        return nullptr;
-    }
+    if (FAILED(hr)) { if (outHr) *outHr = hr; return nullptr; }
+    if (SizeRejected(sw, sh, maxBytes, outHr, outBudgetExceeded)) return nullptr;
 
     result->srcWidth = sw;
     result->srcHeight = sh;
     result->orientation = ReadOrientation(frame.Get());
 
+    // Apply EXIF orientation through the WIC flip rotator.
+    Microsoft::WRL::ComPtr<IWICBitmapSource> oriented;
     if (result->orientation != 1) {
         Microsoft::WRL::ComPtr<IWICBitmapFlipRotator> rotator;
         hr = factory->CreateBitmapFlipRotator(&rotator);
         if (FAILED(hr)) { if (outHr) *outHr = hr; return nullptr; }
         hr = rotator->Initialize(frame.Get(), OrientationTransform(result->orientation));
         if (FAILED(hr)) { if (outHr) *outHr = hr; return nullptr; }
-        result->source = rotator;
-        rotator->GetSize(&result->width, &result->height);
+        oriented = rotator;
     } else {
-        result->source = frame;
-        result->width = sw;
-        result->height = sh;
+        oriented = frame;
     }
 
-    // Direct2D requires a supported pixel format: convert to 32bpp
-    // premultiplied BGRA (the canonical WIC -> Direct2D pipeline).
+    // Canonical WIC -> Direct2D format: 32bpp premultiplied BGRA.
     Microsoft::WRL::ComPtr<IWICFormatConverter> converter;
     hr = factory->CreateFormatConverter(&converter);
     if (FAILED(hr)) { if (outHr) *outHr = hr; return nullptr; }
-    hr = converter->Initialize(result->source.Get(), GUID_WICPixelFormat32bppPBGRA,
+    hr = converter->Initialize(oriented.Get(), GUID_WICPixelFormat32bppPBGRA,
                                WICBitmapDitherTypeNone, nullptr, 0.0,
                                WICBitmapPaletteTypeCustom);
     if (FAILED(hr)) { if (outHr) *outHr = hr; return nullptr; }
-    result->source = converter;
+
+    UINT ow = 0, oh = 0;
+    hr = converter->GetSize(&ow, &oh);
+    if (FAILED(hr)) { if (outHr) *outHr = hr; return nullptr; }
+    // Re-validate the oriented size before allocating the pixel buffer.
+    if (SizeRejected(ow, oh, maxBytes, outHr, outBudgetExceeded)) return nullptr;
+
+    result->width = ow;
+    result->height = oh;
+    result->stride = ow * 4;
+    result->estimateBytes = static_cast<uint64_t>(ow) * oh * 4ULL;
+
+    try {
+        result->pixels.resize(static_cast<size_t>(result->estimateBytes));
+    } catch (const std::bad_alloc&) {
+        if (outHr) *outHr = E_OUTOFMEMORY;
+        return nullptr;
+    }
+
+    hr = converter->CopyPixels(nullptr, result->stride,
+                               static_cast<UINT>(result->pixels.size()),
+                               result->pixels.data());
+    if (FAILED(hr)) { if (outHr) *outHr = hr; return nullptr; }
     return result;
 }
 

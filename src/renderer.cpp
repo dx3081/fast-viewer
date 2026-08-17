@@ -59,17 +59,17 @@ void Renderer::Resize(UINT widthPx, UINT heightPx) {
     EnsureTarget();
 }
 
-Microsoft::WRL::ComPtr<ID2D1Bitmap> Renderer::CreateBitmap(IWICBitmapSource* source,
-                                                           HRESULT* outHr) {
+// Creates a Direct2D bitmap from an immutable 32bpp premultiplied BGRA buffer
+// (worker output). UI thread only; the buffer is never shared for mutation.
+Microsoft::WRL::ComPtr<ID2D1Bitmap> Renderer::CreateBitmapFromPixels(
+    UINT width, UINT height, const void* data, UINT stride) {
     Microsoft::WRL::ComPtr<ID2D1Bitmap> bitmap;
-    if (outHr) *outHr = S_OK;
-    if (!target_ || !source) {
-        if (outHr) *outHr = E_FAIL;
-        return bitmap;
-    }
-    const HRESULT hr = target_->CreateBitmapFromWicBitmap(source, nullptr, &bitmap);
-    if (FAILED(hr)) {
-        if (outHr) *outHr = hr;
+    if (!target_ || !data || width == 0 || height == 0) return bitmap;
+    const D2D1_BITMAP_PROPERTIES props = D2D1::BitmapProperties(
+        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED),
+        96.0f, 96.0f);
+    if (FAILED(target_->CreateBitmap(D2D1::SizeU(width, height), data, stride, props,
+                                     &bitmap))) {
         bitmap.Reset();
     }
     return bitmap;

@@ -1,0 +1,17 @@
+# Build directories
+build/
+out/
+cmake-build-*/
+
+# CMake generated files
+CMakeCache.txt
+CMakeFiles/
+
+# Visual Studio / VS Code
+.vs/
+*.user
+
+# Compiled artifacts
+*.obj
+*.pdb
+*.ilk

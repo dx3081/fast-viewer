@@ -1,0 +1,12 @@
+# Fast Viewer configuration example
+# Small text configuration, conceptually similar to mpv.
+# Fast Viewer must work with built-in defaults if this file does not exist.
+# Invalid values fall back to safe defaults. Unknown keys are ignored.
+
+open_mode=immersive
+right_click=close
+double_click=toggle_window
+wheel_image=zoom
+wheel_filmstrip=navigate
+filmstrip_hide_delay_ms=600
+background=dark

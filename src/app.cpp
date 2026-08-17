@@ -97,6 +97,8 @@ LRESULT App::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
             if (viewMode_ == ViewMode::Fit) {
                 ResetViewToFit();
             } else {
+                ClampPan(); // reclamp pan to the new viewport bounds
+                LogView();
                 DrawNow();
             }
         }
@@ -228,7 +230,37 @@ void App::ResetViewToFit() {
     scale_ = std::max(fitScale_, kMinZoomSafety);
     panX_ = 0.0f;
     panY_ = 0.0f;
+    ClampPan();
     LogView();
+}
+
+// M0.1: deterministic pan clamping. Per axis: if the scaled image fits the
+// viewport it stays centered (axis locked); otherwise pan is limited so every
+// image edge/corner is reachable but overscroll into empty background is not.
+void App::ClampPan() {
+    if (!hasImage_ || !image_) {
+        panX_ = 0.0f;
+        panY_ = 0.0f;
+        return;
+    }
+    const float vw = static_cast<float>(renderer_->Width());
+    const float vh = static_cast<float>(renderer_->Height());
+    const D2D1_SIZE_F size = image_->GetSize();
+    const float iw = size.width;
+    const float ih = size.height;
+
+    const float excessX = iw * scale_ - vw;
+    const float excessY = ih * scale_ - vh;
+    if (excessX <= 0.0f) {
+        panX_ = 0.0f;
+    } else {
+        panX_ = std::clamp(panX_, -excessX / 2.0f, excessX / 2.0f);
+    }
+    if (excessY <= 0.0f) {
+        panY_ = 0.0f;
+    } else {
+        panY_ = std::clamp(panY_, -excessY / 2.0f, excessY / 2.0f);
+    }
 }
 
 void App::ComputeTransform(ViewTransform& view) const {
@@ -289,6 +321,7 @@ void App::Toggle100Percent() {
         scale_ = 1.0f;
         panX_ = 0.0f;
         panY_ = 0.0f;
+        ClampPan();
         LogView();
         DrawNow();
     }
@@ -327,6 +360,7 @@ void App::ZoomAt(POINT clientPt, int wheelDelta) {
 
     constexpr float kEps = 1e-3f;
     viewMode_ = (std::fabs(scale_ - fitScale_) < kEps) ? ViewMode::Fit : ViewMode::Custom;
+    ClampPan();
     LogView();
     DrawNow();
 }
@@ -343,6 +377,7 @@ void App::PanMove(POINT clientPt) {
     panX_ += static_cast<float>(clientPt.x - panLast_.x);
     panY_ += static_cast<float>(clientPt.y - panLast_.y);
     panLast_ = clientPt;
+    ClampPan();
     LogView();
     DrawNow();
 }

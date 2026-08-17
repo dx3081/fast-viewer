@@ -63,10 +63,23 @@ std::shared_ptr<DecodedSource> DecodeImage(IWICImagingFactory* factory,
     hr = frame->GetSize(&sw, &sh);
     if (FAILED(hr) || sw == 0 || sh == 0) { if (outHr) *outHr = hr; return nullptr; }
 
-    // Huge-image safety: reject before any allocation is attempted.
+    // Huge-image safety (M0.1): reject before any large allocation is
+    // attempted. Dimension cap first (also bounds the byte math below).
+    if (sw == 0 || sh == 0 || sw > kMaxImageDimension || sh > kMaxImageDimension) {
+        if (outHr) *outHr = HRESULT_FROM_WIN32(ERROR_FILE_TOO_LARGE);
+        return nullptr;
+    }
+    // Overflow-safe decoded-memory estimate (32bpp BGRA, 4 bytes/pixel).
+    // sw/sh are UINT and capped at 16384, so the products cannot overflow
+    // UINT64; the division check is kept for defensive clarity.
     const UINT64 pixels = static_cast<UINT64>(sw) * static_cast<UINT64>(sh);
-    if (sw > kMaxImageDimension || sh > kMaxImageDimension || pixels > kMaxImagePixels) {
-        if (outHr) *outHr = HRESULT_FROM_WIN32(ERROR_INVALID_DATA);
+    if (pixels / static_cast<UINT64>(sw) != static_cast<UINT64>(sh)) {
+        if (outHr) *outHr = HRESULT_FROM_WIN32(ERROR_FILE_TOO_LARGE);
+        return nullptr;
+    }
+    const UINT64 decodedBytes = pixels * 4ULL;
+    if (decodedBytes > kMaxDecodedBytes) {
+        if (outHr) *outHr = HRESULT_FROM_WIN32(ERROR_FILE_TOO_LARGE);
         return nullptr;
     }
 

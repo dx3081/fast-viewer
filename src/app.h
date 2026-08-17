@@ -35,6 +35,7 @@ private:
     void ComputeFit();
     void ResetViewToFit();
     void ComputeTransform(ViewTransform& view) const;
+    void ClampPan();
     void DrawNow();
     void LogView();
 

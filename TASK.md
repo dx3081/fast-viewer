@@ -1,61 +1,81 @@
 # Fast Viewer — Task State
 
-Current phase: M0 — Core Viewer
+Current phase: M0.1 — Core Viewer Cleanup
 
-## M0 authorized scope
+## M0 status
 
-- launch from a single command-line image path (clean exit if no valid path is supplied)
-- immersive borderless mode (default) and normal window mode
-- Direct2D + WIC rendering pipeline
-- fit behavior, 100% / Fit toggle, cursor-centered wheel zoom, left-drag pan
-- F11 and double-click mode toggle
-- Esc / right-click / window X close
-- Left/Right navigation within the same direct parent directory, natural filename sort, no recursion
-- graceful failure for corrupt / unsupported / oversized images
-- Windows 10 DPI-correct behavior (per-monitor aware)
-- lightweight timing/debug instrumentation only (no telemetry)
+M0 (Core Viewer) is complete: commit 9061d8e "feat: M0 core viewer (Win32 +
+Direct2D + WIC)". M0.1 is a small safety/interaction cleanup pass on top.
 
-## M0 explicit exclusions
+## M0.1 authorized scope (exactly two goals)
 
-No filmstrip, thumbnails, thumbnail cache, preloading architecture,
-direction-aware preload, directory watcher, viewer.conf parsing, settings UI,
-installer, file associations, context menu, image editing,
-delete/copy/move/rename, EXIF/metadata UI, themes, plugins,
-network code, telemetry, AI, cloud features.
+1. Correct pan clamping (no more off-center dragging at Fit; no overscroll).
+2. Stronger decode-memory safety (explicit decoded-bytes budget before any
+   large allocation).
 
-## M0 Definition of Done
+## Pan clamp semantics (M0.1)
 
-- native executable builds successfully (CMake + MSVC, `/std:c++latest`)
-- valid image path launches the viewer; immersive mode works
-- normal window mode, F11 and double-click toggles work
-- Esc / right-click / window X close work
-- Fit, 100% / Fit toggle, cursor-centered wheel zoom, pan work
-- Left/Right navigation works; natural filename sort; no recursive navigation
-- JPEG / PNG / BMP / TIFF tested; WebP only through an installed system codec
-- corrupt image does not crash; huge-image safety; Windows 10 DPI behavior acceptable
-- idle CPU and disk activity settle; no runaway memory
-- project remains small and dependency-free
-- remaining M0 limitations documented in the M0 report
+Deterministic, per-axis clamping applied after drag, wheel zoom, Fit, 100%,
+window resize, immersive/normal toggle, and navigation:
 
-M1 is NOT automatically authorized after M0. Stop and await human review.
+- If the scaled image dimension fits the viewport on an axis, the image is
+  centered on that axis and pan is locked (offset resolves to 0).
+- If the scaled image dimension exceeds the viewport on an axis, pan is
+  limited to +/- (scaled - viewport) / 2 so every image edge/corner is
+  reachable and overscroll into empty background is impossible.
+- No elastic scrolling, no animation.
 
-## M0 known limitations (documented per M0 Definition of Done)
+## Decoded-memory safety limit (M0.1)
 
-- Decode is synchronous on the UI thread: navigating to a large uncached image
-  briefly blocks the UI (M1 moves decode off-thread with preloading).
-- No preload/cache: every navigation decodes from disk (M1 scope).
-- If an arrow key is pressed before directory enumeration completes, the
-  navigation is applied as soon as the scan finishes (no UI freeze).
-- Pan is not clamped: at Fit zoom the image can be dragged off-center.
-- WebP is only usable through an installed system WIC codec; Windows 10 22H2
-  has none by default, so WebP is not in the navigation list and opens with a
-  failure state if no codec is present.
-- HEIC/HEIF/AVIF/GIF/RAW are out of M0 scope and show the failure state.
-- Huge-image safety caps decoding at 16384 px per dimension and 200 MP;
-  larger images show the failure state (no tiled rendering in M0).
-- Corrupt files may partially decode via WIC: shown if possible, error state
-  otherwise; never crashes.
-- Normal-window geometry persists through a tiny registry key
-  (HKCU\Software\FastViewer), updated only while in normal window mode.
-- Timing instrumentation writes a small local log only when FAST_VIEWER_TIMING
-  is set; no telemetry.
+- Estimation: `decoded_bytes = width * height * 4` (32bpp BGRA), computed with
+  overflow-safe arithmetic after a 16384 px/dimension cap (Direct2D feature
+  limit) that also bounds the byte math.
+- Hard budget: **512 MB** of estimated decoded bytes per image.
+- Rationale: the raw 4-byte/pixel estimate is the conservative reference; the
+  real WIC/Direct2D path transiently holds decoder frame + format converter +
+  D2D bitmap (measured roughly 2.5-4x the raw estimate in working set), so
+  this budget rejects ~768 MB-raw-class full decodes outright (e.g.
+  16000x12000) while accepting ordinary photos up to ~10000x8000 (~320 MB raw).
+- Rejection: graceful failure state via the existing error path
+  (hr=0x800700DF, ERROR_FILE_TOO_LARGE); navigation remains usable; the
+  dangerous allocation is never attempted.
+- The exact threshold may be revisited in M1 based on measured behavior.
+
+## M0.1 tests performed (external scripted harness, outside the repo)
+
+- Pan clamp: Fit lock, horizontal-only overflow, vertical-only overflow,
+  both-axis overflow with all four corners reachable, no overscroll, resize
+  reclamp, 100%/Fit reclamp — all pass.
+- Memory safety: 6000x4000 accepted (real decode), 10000x8000 accepted per the
+  guard formula (math validation; no 1 GB real decode performed), 12000x12000
+  rejected by the byte guard before allocation, 20000x1000 rejected by the
+  dimension cap, WIC-level header rejection graceful, navigation usable after
+  rejection — all pass.
+- Full M0 regression suite still passes (50/50).
+
+## M0.1 Definition of Done
+
+- Fit images cannot be dragged off-center
+- pan clamped correctly on both axes
+- pan reclamps after zoom / resize / mode change / navigation
+- decoded-memory estimate uses overflow-safe arithmetic
+- oversized images rejected before dangerous allocation
+- ordinary modern photos remain supported
+- no new dependencies, no new product features
+- all previous M0 behavior still passes (scripted harness)
+- clean build with zero warnings
+- commit pushed to origin/main
+
+## Remaining known limitations (unchanged from M0 unless noted)
+
+- Decode is synchronous on the UI thread (M1 moves decode off-thread).
+- No preload/cache (M1 scope).
+- Arrows pressed before directory enumeration completes are applied when the
+  scan finishes.
+- WebP only via an installed system WIC codec (none on Windows 10 22H2).
+- HEIC/HEIF/AVIF/GIF/RAW out of scope; failure state.
+- Corrupt files may partially decode via WIC; never crashes.
+- Normal-window geometry persists via a tiny registry key.
+- Timing instrumentation only when FAST_VIEWER_TIMING is set; no telemetry.
+
+M1 is NOT authorized. Stop and await human review.

@@ -373,15 +373,18 @@ void App::OnDecodeDone(uint64_t id) {
     img->width = px->width;
     img->height = px->height;
     img->estimateBytes = px->estimateBytes;
+    const long long tUp = NowMicros();
     img->bitmap = renderer_->CreateBitmapFromPixels(px->width, px->height,
                                                     px->pixels.data(), px->stride);
+    const double uploadMs = (NowMicros() - tUp) / 1000.0;
     if (!img->bitmap) {
         ShowFailure(res->path, E_FAIL, res->decodeMicros);
         return;
     }
 
-    Log(std::format(L"decode_ms={:.1f} {}x{} orient={} {}", res->decodeMicros / 1000.0,
-                    px->width, px->height, px->orientation, res->path));
+    Log(std::format(L"decode_ms={:.1f} {}x{} orient={} {} upload_ms={:.1f}",
+                    res->decodeMicros / 1000.0, px->width, px->height, px->orientation,
+                    res->path, uploadMs));
     DisplayImage(img, targetIdx, navLogPending_, id);
 }
 
@@ -409,15 +412,18 @@ void App::DisplayImage(const std::shared_ptr<DecodedImage>& img, int index,
         firstRenderLogged_ = true;
         Log(std::format(L"first_render_ms={:.1f}", ElapsedMs()));
     }
-    if (navLog) {
-        navLogPending_ = false;
-        Log(std::format(L"nav: {} idx={} id={} total_ms={:.1f}",
-                        lastNavDirection_ > 0 ? L"next" : L"prev", displayIndex_, id,
-                        (NowMicros() - requestT0Micros_) / 1000.0));
-    }
 
     ResetViewToFit();
-    DrawNow();
+    const long long tDraw = NowMicros();
+    DrawNow(); // presentation: swap + render the new image
+    const double renderMs = (NowMicros() - tDraw) / 1000.0;
+    if (navLog) {
+        navLogPending_ = false;
+        // total_ms covers the complete path: navigation request -> presented.
+        Log(std::format(L"nav: {} idx={} id={} total_ms={:.1f} render_ms={:.1f}",
+                        lastNavDirection_ > 0 ? L"next" : L"prev", displayIndex_, id,
+                        (NowMicros() - requestT0Micros_) / 1000.0, renderMs));
+    }
     SchedulePreload();
 }
 
@@ -448,8 +454,10 @@ void App::OnPreloadDone(uint64_t id) {
     img->width = px->width;
     img->height = px->height;
     img->estimateBytes = px->estimateBytes;
+    const long long tUp = NowMicros();
     img->bitmap = renderer_->CreateBitmapFromPixels(px->width, px->height,
                                                     px->pixels.data(), px->stride);
+    const double uploadMs = (NowMicros() - tUp) / 1000.0;
     if (!img->bitmap) {
         Log(std::format(L"preload: bitmap create failed id={}", id));
         return;
@@ -460,9 +468,9 @@ void App::OnPreloadDone(uint64_t id) {
         Log(std::format(L"cache: evict {:.0f}MB cache={:.0f}MB evicts={}", evicted / kMiB,
                         cache_->Bytes() / kMiB, cache_->Evictions()));
     }
-    Log(std::format(L"preload: done id={} est={:.0f}MB cache={:.0f}MB evicts={}",
-                    id, img->estimateBytes / kMiB, cache_->Bytes() / kMiB,
-                    cache_->Evictions()));
+    Log(std::format(L"preload: done id={} est={:.0f}MB upload_ms={:.1f} cache={:.0f}MB evicts={} {}",
+                    id, img->estimateBytes / kMiB, uploadMs, cache_->Bytes() / kMiB,
+                    cache_->Evictions(), res->path));
 }
 
 void App::SchedulePreload() {

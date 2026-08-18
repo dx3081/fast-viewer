@@ -111,6 +111,7 @@ private:
     float fitScale_ = 1.0f;
     bool panning_ = false;
     POINT panLast_{};
+    bool suppressResizeRender_ = false; // defer draws during a mode switch
 
     // navigation / request state
     std::shared_ptr<Navigation::Result> navResult_;

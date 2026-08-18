@@ -125,6 +125,10 @@ LRESULT App::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
                 ResetViewToFit();
             } else {
                 ClampPan(); // reclamp pan to the new viewport bounds
+            }
+            // Defer the expensive draw during a mode switch; ToggleMode()
+            // repaints once after the transition completes.
+            if (!suppressResizeRender_) {
                 LogView();
                 DrawNow();
             }
@@ -791,7 +795,13 @@ void App::Close() {
 
 void App::ToggleMode() {
     immersive_ = !immersive_;
+    // Make the style/geometry switch visually atomic: suppress intermediate
+    // renders during the transition (they are slow at high zoom and leave a
+    // visible "borderless window" half-state), then repaint once at the end.
+    suppressResizeRender_ = true;
     window_.SetImmersive(immersive_);
+    suppressResizeRender_ = false;
+    InvalidateRect(hwnd_, nullptr, FALSE);
     Log(std::format(L"mode={}", immersive_ ? L"immersive" : L"normal"));
 }
 

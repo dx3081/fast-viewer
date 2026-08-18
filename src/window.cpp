@@ -90,7 +90,6 @@ void Window::ApplyStyleAndPosition() {
         mi.cbSize = sizeof(mi);
         GetMonitorInfoW(mon, &mi);
         rc = mi.rcWork;
-        SetWindowLongPtrW(hwnd_, GWL_STYLE, WS_POPUP | WS_VISIBLE);
     } else {
         if (!LoadNormalRect(rc)) {
             HMONITOR mon = MonitorFromWindow(hwnd_, MONITOR_DEFAULTTONEAREST);
@@ -105,9 +104,29 @@ void Window::ApplyStyleAndPosition() {
         }
         normalRect_ = rc;
         hasNormalRect_ = true;
-        SetWindowLongPtrW(hwnd_, GWL_STYLE, WS_OVERLAPPEDWINDOW | WS_VISIBLE);
     }
 
+    // A window that was maximized (or carries a stale restore-to-maximized
+    // placement) must be normalized before the style switch, otherwise the
+    // system can reapply maximize/restore geometry and the toggle lands in a
+    // half-maximized "weird window" state.
+    WINDOWPLACEMENT wp{};
+    wp.length = sizeof(wp);
+    if (GetWindowPlacement(hwnd_, &wp) &&
+        (wp.showCmd == SW_SHOWMAXIMIZED || (wp.flags & WPF_RESTORETOMAXIMIZED))) {
+        wp.showCmd = SW_SHOWNORMAL;
+        wp.flags = 0;
+        SetWindowPlacement(hwnd_, &wp);
+    }
+
+    // Move to the target rect while the old frame is still present, then swap
+    // the style and reframe in place. The user never sees the "borderless
+    // window at the old position" half-state.
+    SetWindowPos(hwnd_, nullptr, rc.left, rc.top,
+                 rc.right - rc.left, rc.bottom - rc.top,
+                 SWP_NOZORDER | SWP_NOACTIVATE);
+    SetWindowLongPtrW(hwnd_, GWL_STYLE,
+                      (immersive_ ? WS_POPUP : WS_OVERLAPPEDWINDOW) | WS_VISIBLE);
     SetWindowPos(hwnd_, nullptr, rc.left, rc.top,
                  rc.right - rc.left, rc.bottom - rc.top,
                  SWP_FRAMECHANGED | SWP_NOZORDER | SWP_NOACTIVATE);

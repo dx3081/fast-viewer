@@ -90,7 +90,7 @@ void Window::ApplyStyleAndPosition() {
         mi.cbSize = sizeof(mi);
         GetMonitorInfoW(mon, &mi);
         rc = mi.rcWork;
-        SetWindowLongPtrW(hwnd_, GWL_STYLE, WS_POPUP);
+        SetWindowLongPtrW(hwnd_, GWL_STYLE, WS_POPUP | WS_VISIBLE);
     } else {
         if (!LoadNormalRect(rc)) {
             HMONITOR mon = MonitorFromWindow(hwnd_, MONITOR_DEFAULTTONEAREST);
@@ -105,7 +105,7 @@ void Window::ApplyStyleAndPosition() {
         }
         normalRect_ = rc;
         hasNormalRect_ = true;
-        SetWindowLongPtrW(hwnd_, GWL_STYLE, WS_OVERLAPPEDWINDOW);
+        SetWindowLongPtrW(hwnd_, GWL_STYLE, WS_OVERLAPPEDWINDOW | WS_VISIBLE);
     }
 
     SetWindowPos(hwnd_, nullptr, rc.left, rc.top,

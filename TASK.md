@@ -2,25 +2,38 @@
 
 Current phase: 1.0 RC — Release Preparation
 
-## 1.0 RC fix — double-click close bug (implemented)
+## 1.0 RC fix — preserve WS_VISIBLE across mode toggles (CORE)
 
-The Task B diagnosis identified that in normal window mode, a left
-double-click landing on the title-bar close button (X, HTCLOSE) fell through
-to DefWindowProc, which generated SC_CLOSE and closed the viewer. Client-area
-double-clicks were never involved.
+The real double-click bug's true root cause (diagnosed with runtime evidence):
+`Window::ApplyStyleAndPosition()` replaced GWL_STYLE with `WS_POPUP` or
+`WS_OVERLAPPEDWINDOW`, both of which do NOT include `WS_VISIBLE` (0x10000000).
+`WS_VISIBLE` was set only once at startup (`ShowWindow(SW_SHOW)`), so the first
+immersive->normal toggle stripped it. The window became invisible
+(`IsWindowVisible() == FALSE`); Windows stopped compositing it and excluded it
+from hit-testing, so real clicks and the user's view "went through" to the
+window underneath. Z-order, activation, and geometry were all correct.
 
-- Fix (src/app.cpp HandleMessage): intercept WM_NCLBUTTONDBLCLK when
-  wParam == HTCLOSE and return 0, so a double-click on the X cannot close.
-  Single-click X close is untouched (it flows through the
-  WM_NCLBUTTONDOWN/UP -> DefWindowProc -> SC_CLOSE path; WM_NCLBUTTONDBLCLK is
-  never generated for a single click). Client-area WM_LBUTTONDBLCLK, Esc,
-  right-click, and F11 behavior unchanged.
-- Verified: client-area double-click toggles immersive<->normal 10x (PASS);
-  X double-click does NOT close (PASS, WM_NCLBUTTONDBLCLK(HTCLOSE) and full
-  NC down/up/dblclk/up sequence); single-click X close preserved
-  (SC_CLOSE and WM_CLOSE each exit cleanly with code 0, the paths
-  DefWindowProc generates for a real X click); Esc closes; right-click
-  closes; F11 toggles; M0 50/50, M2 26/26, RC 21/21 pass; clean /W4 build.
+- Fix (src/window.cpp ApplyStyleAndPosition): preserve WS_VISIBLE when
+  replacing the style —
+  `SetWindowLongPtrW(hwnd_, GWL_STYLE, WS_POPUP | WS_VISIBLE)` /
+  `SetWindowLongPtrW(hwnd_, GWL_STYLE, WS_OVERLAPPEDWINDOW | WS_VISIBLE)`.
+- Reverted the incorrect commit 66e6c86 `WM_NCLBUTTONDBLCLK` + HTCLOSE
+  special-case (it was based on a wrong diagnosis). Standard Windows
+  X-button behavior (single-click close) is restored.
+- Verified: IsWindowVisible==TRUE after every one of 10 real double-click
+  mode transitions; WindowFromPoint resolves to the viewer; F11 toggles both
+  directions always visible; X single-click closes (SC_CLOSE path, code 0);
+  Esc closes; right-click closes; zoom/pan unregressed (M0 50/50); M2 26/26;
+  clean /W4 build, zero warnings.
+
+## 1.0 RC — superseded double-click diagnosis (reverted 66e6c86)
+
+An earlier diagnosis blamed the title-bar close button (HTCLOSE->SC_CLOSE) and
+commit 66e6c86 added a WM_NCLBUTTONDBLCLK+HTCLOSE special-case. That diagnosis
+was incorrect: the real cause was the loss of WS_VISIBLE on mode toggle (see
+"preserve WS_VISIBLE across mode toggles" above), which made the window
+invisible so clicks passed through to the window underneath. The 66e6c86
+special-case has been reverted; standard Windows X-button behavior is restored.
 
 ## 1.0 RC fix — filmstrip edge centering (Task A)
 

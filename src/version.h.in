@@ -1,0 +1,19 @@
+// Fast Viewer — generated version header.
+// DO NOT EDIT: produced by CMake from the version block in CMakeLists.txt
+// (single source of truth for the release version).
+#ifndef FAST_VIEWER_VERSION_H
+#define FAST_VIEWER_VERSION_H
+
+#define FAST_VIEWER_VERSION_MAJOR @FAST_VIEWER_VERSION_MAJOR@
+#define FAST_VIEWER_VERSION_MINOR @FAST_VIEWER_VERSION_MINOR@
+#define FAST_VIEWER_VERSION_PATCH @FAST_VIEWER_VERSION_PATCH@
+#define FAST_VIEWER_VERSION_SUFFIX "@FAST_VIEWER_VERSION_SUFFIX@"
+
+// Numeric file version (Windows fixed version info): 1.0.0.0
+#define FAST_VIEWER_FILE_VERSION_MS @FAST_VIEWER_VERSION_MAJOR@, @FAST_VIEWER_VERSION_MINOR@
+#define FAST_VIEWER_FILE_VERSION_LS @FAST_VIEWER_VERSION_PATCH@, 0
+
+// Display release version: @FAST_VIEWER_VERSION_DISPLAY@
+#define FAST_VIEWER_VERSION_STRING "@FAST_VIEWER_VERSION_DISPLAY@"
+
+#endif // FAST_VIEWER_VERSION_H

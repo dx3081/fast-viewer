@@ -1,6 +1,53 @@
 # Fast Viewer — Task State
 
-Current phase: RC UX POLISH (filmstrip layout only) — awaiting human visual review
+Current phase: 1.0 RC — Release Preparation
+
+## 1.0 RC status
+
+RC UX POLISH is complete (commit 662a549). 1.0 RC release preparation is
+complete; publication is NOT authorized automatically — the human owner
+decides whether RC1 is published.
+
+- Version: 1.0.0-rc1 (centralized in CMakeLists.txt; generated version.h;
+  executable metadata; installer metadata; release docs)
+- Runtime strategy: static MSVC runtime (/MT via CMAKE_MSVC_RUNTIME_LIBRARY).
+  The release executable (514,560 bytes) imports only inbox Windows system
+  DLLs (d2d1, DWrite, ole32, SHLWAPI, KERNEL32, USER32, SHELL32, ADVAPI32) —
+  no MSVCP140/VCRUNTIME140, no UCRT DLLs, no VC redistributable required.
+- Executable metadata: FileDescription/ProductName "Fast Viewer",
+  FileVersion/ProductVersion 1.0.0-rc1, no invented company/copyright.
+- Icon: temporary placeholder (src/resources/fast_viewer.ico, dark rounded
+  square + light "F") — FINAL ICON PENDING HUMAN APPROVAL. Swapping the icon
+  requires changing one line in src/resources/app.rc only.
+- License: NOT YET SELECTED (no LICENSE file added).
+- Code signing: UNSIGNED (no certificates fabricated). Windows SmartScreen may
+  warn on a new unsigned application; expected for a small private project.
+- Portable package: single fast_viewer.exe + README.txt (zip, ~247 KB).
+  Verified to run from a clean folder outside the repository: JPEG/PNG/BMP/
+  TIFF/EXIF all open; filmstrip, zoom/pan, mode toggles, close all work; no
+  missing-DLL error; no config file required; idle CPU 0% / disk zero /
+  working set ~39 MB.
+- Installer: Inno Setup (release-only build tool, not part of the runtime),
+  per-user install to %LocalAppData%\Programs\Fast Viewer, no admin rights.
+  Registers "Open with" + capabilities for .jpg/.jpeg/.png/.bmp/.tif/.tiff
+  (per-user, additive; never forces a default-app change — Windows 10
+  default-app confirmation is respected). WebP/GIF/RAW/HEIC not registered.
+- Install/uninstall/reinstall tested on Windows 10: clean install, clean
+  uninstall (files + FastViewer registry entries removed, no leftover
+  process), reinstall works, unrelated associations untouched.
+- Multiple-launch behavior: each Explorer double-click opens its own
+  process/window (documented; no single-instance IPC added).
+- Viewer regressions on the release build: M0 50/50, M0.1 27/27, M1 26/26,
+  M1.1 (preload-hit median ~9-11 ms), M2 26/26, RC polish 21/21.
+- Performance on the release build: cold first image median ~78 ms,
+  preload-hit navigation median ~9 ms, idle CPU 0%, idle disk zero,
+  working set ~39 MB. No regression from release metadata/runtime changes.
+- Release staging: C:\DSWorkspace\release-staging (gitignored; not committed):
+  FastViewer-1.0.0-rc1-portable.zip, FastViewer-1.0.0-rc1-setup.exe,
+  SHA256SUMS.txt, portable folder.
+- GitHub Release: NOT published. Git tag: NOT created.
+- Reproducible assembly: packaging/build_release.ps1 (builds, stages portable,
+  zips, runs ISCC, writes SHA-256 checksums).
 
 ## RC UX polish status
 
@@ -152,3 +199,10 @@ to prepare 1.0.
 - RC polish (filmstrip layout only) committed; pushed to origin/main
 - Human visual inspection: Smaller/Centered/Less box/grid-like
 - Next authorized phase: NONE — awaiting human visual review
+
+## After 1.0 RC release preparation
+
+- Release preparation committed; pushed to origin/main
+- Publication NOT authorized automatically: human owner decides whether RC1
+  is published (e.g., GitHub Release)
+- Next authorized action: NONE — do not publish 1.0 without human approval

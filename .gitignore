@@ -1,7 +1,11 @@
 # Build directories
 build/
+build-*/
 out/
 cmake-build-*/
+
+# Release staging (generated artifacts; publish via GitHub Releases instead)
+release/
 
 # CMake generated files
 CMakeCache.txt

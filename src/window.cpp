@@ -119,9 +119,13 @@ void Window::ApplyStyleAndPosition() {
         SetWindowPlacement(hwnd_, &wp);
     }
 
-    // Move to the target rect while the old frame is still present, then swap
-    // the style and reframe in place. The user never sees the "borderless
-    // window at the old position" half-state.
+    // Make the switch paint atomically: freeze the window so the intermediate
+    // geometry/frame states (e.g. "borderless window at the old rect",
+    // "fullscreen window with a title bar") are never shown to the user, then
+    // unlock and repaint the final state once. Without this, a second
+    // double-click during the visible half-state toggles from a half-state and
+    // the mode loop looks like I -> N -> A -> B -> C -> ...
+    LockWindowUpdate(hwnd_);
     SetWindowPos(hwnd_, nullptr, rc.left, rc.top,
                  rc.right - rc.left, rc.bottom - rc.top,
                  SWP_NOZORDER | SWP_NOACTIVATE);
@@ -130,6 +134,8 @@ void Window::ApplyStyleAndPosition() {
     SetWindowPos(hwnd_, nullptr, rc.left, rc.top,
                  rc.right - rc.left, rc.bottom - rc.top,
                  SWP_FRAMECHANGED | SWP_NOZORDER | SWP_NOACTIVATE);
+    LockWindowUpdate(nullptr);
+    InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
 void Window::ApplyDpiChanged(const RECT& suggestedRect) {

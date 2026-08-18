@@ -2,6 +2,53 @@
 
 Current phase: 1.0 RC — Release Preparation
 
+## 1.0 RC fix — filmstrip edge centering (Task A)
+
+Human review rejected the old "natural edge alignment" behavior (first few
+images left-align, last few right-align). New product rule: the current
+thumbnail stays horizontally centered in the viewer at ALL directory
+positions; where neighbors do not exist, the space is simply empty filmstrip
+background (no fake cells, no placeholder boxes, no wrap).
+
+- Fix: Filmstrip::Update now always places the current cell (position
+  p = (visible-1)/2) on the viewport center; cells whose index falls outside
+  [0, count) are skipped. visibleStart_ may be negative (logical row start);
+  ScheduleThumbs iterates the logical row via VisibleWidth so edge cells still
+  load. Geometry log reports the first real cell index (>= 0).
+- Verified: 1/1297, 2/1297, 5/1297, 100/1297, 500/1297, 1293/1297, 1296/1297,
+  1297/1297 all curcx=1280 (diff 0); rapid Right/Left keeps the selection at
+  fixed screen center; empty edge space confirmed visually (left for index 1,
+  right for index N); thumbnail click and wheel navigation correct at edges;
+  125% DPI and normal window mode correct; M0 50/50, M2 26/26, RC 21/21 pass.
+- Docs: UX.md and TASK.md updated to the permanent-center rule.
+
+## 1.0 RC diagnosis — double-click close bug (Task B, DIAGNOSIS ONLY)
+
+Human-observed: immersive -> left double-click -> normal -> left double-click
+-> viewer closes. Expected: double-click toggles immersive/normal repeatedly
+and never closes. No product code was changed for this (diagnosis only).
+
+- Runtime evidence (synthetic + real SendInput, temporary env-gated diag log
+  removed after capture):
+  - Client-area left double-clicks NEVER close: immersive->normal->immersive
+    toggles correctly at center, edges, fast human-speed, after F11, after
+    pan; 4x single clicks never close. Right-click closes (expected).
+  - The app has NO handler for WM_NCLBUTTONDBLCLK / WM_SYSCOMMAND /
+    WM_NCHITTEST; all fall through to DefWindowProc, which implements the
+    standard title-bar behavior. Caption (HTCAPTION) double-click ->
+    SC_MAXIMIZE/SC_RESTORE (verified in diag: msg 0x00A1 wp=0x2 -> 0x0112
+    0xF012 -> 0xF032; does NOT close).
+  - Close is triggered ONLY by WM_SYSCOMMAND SC_CLOSE -> WM_CLOSE -> destroy
+    (verified: posting SC_CLOSE and WM_CLOSE each exit the process cleanly).
+    SC_CLOSE is produced by DefWindowProc when the click/double-click lands
+    on the title-bar close button (HTCLOSE) of the NORMAL-mode window.
+  - Root cause: in normal mode the window gains a standard title bar whose
+    close button (X) is live. A left double-click that lands on that X is
+    interpreted by DefWindowProc as SC_CLOSE. The bug is therefore
+    cursor-position/geometry dependent (only when the second double-click
+    hits the X region); client-area double-clicks are not involved.
+  - Awaiting human decision on the fix (not implemented per task authority).
+
 ## 1.0 RC fix — filmstrip first-reveal centering
 
 Human testing observed that on the first reveal after launch, the filmstrip

@@ -332,13 +332,16 @@ void App::DrawNow() {
             if (c.isCurrent) curCx = (c.rect.left + c.rect.right) / 2.0f;
         }
         const float dpi = DpiScale();
-        const std::wstring key = std::format(L"{}|{}|{:.0f}", filmstrip_.VisibleStart(),
+        // Log the first real cell index (>= 0): the logical row start may be
+        // negative when the current image is near the directory start.
+        const int firstReal = std::max(0, filmstrip_.VisibleStart());
+        const std::wstring key = std::format(L"{}|{}|{:.0f}", firstReal,
                                              filmstrip_.VisibleCount(), curCx);
         if (key != lastGeomKey_) {
             lastGeomKey_ = key;
             Log(std::format(
                 L"filmstrip: geometry start={} count={} cellw={:.0f} cellh={:.0f} gap={:.0f} margin={:.0f} top={:.0f} striph={:.0f} curcx={:.1f}",
-                filmstrip_.VisibleStart(), filmstrip_.VisibleCount(),
+                firstReal, filmstrip_.VisibleCount(),
                 Filmstrip::kThumbW * dpi, Filmstrip::kThumbH * dpi,
                 Filmstrip::kGap * dpi, Filmstrip::kMargin * dpi, fs.stripRect.top,
                 fs.stripRect.bottom - fs.stripRect.top, curCx));
@@ -681,9 +684,12 @@ void App::ScheduleThumbs() {
     const int count = static_cast<int>(navResult_->files.size());
     if (count == 0) return;
     const UINT maxDim = static_cast<UINT>(Filmstrip::kThumbH * DpiScale());
+    // Logical row [start, start+width); start may be negative at the start of
+    // the directory. Walk the row plus one neighbor on each side; indices
+    // outside the directory are skipped (edge cells simply do not exist).
     const int start = filmstrip_.VisibleStart();
-    const int end = start + filmstrip_.VisibleCount();
-    for (int i = start - 1; i <= end; ++i) {
+    const int width = filmstrip_.VisibleWidth();
+    for (int i = start - 1; i < start + width + 1; ++i) {
         if (i < 0 || i >= count) continue;
         const std::wstring& path = navResult_->files[i];
         if (thumbCache_->Contains(path) || ThumbFailedContains(thumbFailed_, path)) continue;

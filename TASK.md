@@ -118,10 +118,11 @@ be smaller and less box/grid-like while preserving every interaction:
 - Thumbnails shrunk from 120x96 to **92x68 logical px**; strip total height is
   now **80 logical px** (68 + 2 x 6 padding), down from ~108.
 - Gap 8 -> **6 logical px**; margins 16 -> **12 logical px**; padding 6 logical px.
-- Current image now **visually centers on the viewport center** whenever there
-  are enough real images on both sides (position p = (visible-1)/2 in a
-  clamped window of 5..11 cells); at directory edges the row aligns naturally
-  to the available side (no fake cells, no wrap).
+- Current image now **visually centers on the viewport center** always: the
+  current thumbnail occupies position p = (visible-1)/2 of the row and the row
+  is placed so that cell sits on the viewport center (window of 5..11 cells);
+  at directory edges the current cell stays centered and the missing neighbor
+  space is simply empty filmstrip background (no fake cells, no wrap).
 - Box/grid look removed: non-current cells have **no border**; the current cell
   keeps a thin **1.5 px selection border** only; dark flat background + 1 px
   top separator remain.
@@ -139,8 +140,9 @@ be smaller and less box/grid-like while preserving every interaction:
 - gap: 6 logical px; margins: 12 logical px; padding: 6 logical px
 - strip height: 68 + 2 x 6 = 80 logical px
 - visible cells: width-driven, clamped to 5..11
-- centering: current at position (visible-1)/2 when index >= p and
-  index <= count-1-p; otherwise left (start=0) or right alignment
+- centering: current always at position (visible-1)/2 of the row, row placed
+  so the current cell center = viewport center; at directory edges missing
+  neighbors leave empty filmstrip background (no fake cells, no wrap)
 - constants centralized in filmstrip.h
 
 ## M2 status
@@ -177,8 +179,9 @@ Photo Viewer-style interaction layer on top of the already-fast core viewer.
 - current thumbnail marked with a thin 1.5 px selection border only;
   non-current cells have no border; dark flat background, 1 px top separator,
   no blur/glass/transparency effects
-- current image visually centered on the viewport center for mid-directory
-  positions; natural alignment at directory start/end (no fake slots, no wrap)
+- current image stays horizontally centered in the viewer, including at
+  directory edges: where neighbors do not exist, the space is empty filmstrip
+  background (no fake cells, no placeholder boxes, no wrap)
 - constants centralized in filmstrip.h (future viewer.conf candidates)
 
 ## M2 explicit exclusions

@@ -56,7 +56,9 @@ F11 and double-click intentionally provide two equivalent ways to toggle viewing
 - Show immediately or nearly immediately.
 - After the pointer leaves, hide after approximately 500–800 ms.
 - Typical visible thumbnail count ~7–11 depending on viewport width.
-- Current image remains near the center where practical.
+- The current thumbnail stays horizontally centered in the viewer, even near
+  the beginning or end of the directory: where neighboring images do not
+  exist, the space is simply empty filmstrip background (no fake cells).
 - Only nearby thumbnails exist/load. Do not create UI elements for every image in a directory.
 - Mouse wheel over the filmstrip navigates between images.
 - Clicking a thumbnail navigates directly to that image.

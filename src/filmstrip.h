@@ -38,6 +38,7 @@ public:
 
     int VisibleStart() const { return visibleStart_; }
     int VisibleCount() const { return static_cast<int>(cells_.size()); }
+    int VisibleWidth() const { return visibleWidth_; }
     const std::vector<ThumbCell>& Cells() const { return cells_; }
     D2D1_RECT_F StripRect() const { return stripRect_; }
     int CurrentIndex() const { return currentIndex_; }
@@ -48,7 +49,8 @@ private:
     float dpiScale_ = 1.0f;
     int count_ = 0;
     int currentIndex_ = 0;
-    int visibleStart_ = 0;
+    int visibleStart_ = 0;   // logical first cell index (may be negative at edges)
+    int visibleWidth_ = 0;   // logical row width (cells skipped at edges)
     D2D1_RECT_F stripRect_{};
     std::vector<ThumbCell> cells_;
 };

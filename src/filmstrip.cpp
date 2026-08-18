@@ -29,32 +29,24 @@ void Filmstrip::Update(UINT clientW, UINT clientH, float dpiScale, int count,
     visible = std::clamp(visible, kMinVisible, kMaxVisible);
     visible = std::min(visible, count);
 
-    // RC polish centering rule: the current image occupies the cell whose
-    // center aligns with the viewport's horizontal center whenever there are
-    // enough real images on both sides; at directory edges the row aligns
-    // naturally to the available side (no fake/blank cells, no wrap).
+    // RC centering rule (permanent center): the current image always occupies
+    // the cell whose center aligns with the viewport's horizontal center.
+    // Neighbors fill the row around it; where a neighbor would fall outside
+    // the directory (index < 0 or >= count) the space is simply empty
+    // filmstrip background — no fake cells, no placeholder boxes, no wrap.
     const int p = (visible - 1) / 2; // current position when centered
-    int start = currentIndex - p;
-    start = std::clamp(start, 0, std::max(0, count - visible));
-    visibleStart_ = start;
-
-    const int pos = currentIndex - start; // position of current within the row
-    const bool canCenter = (currentIndex >= p) && (currentIndex <= count - 1 - p);
-
-    float rowX;
-    if (canCenter) {
-        // center the CURRENT cell on the viewport center; neighbors shift around it
-        rowX = static_cast<float>(clientW) / 2.0f - cellW / 2.0f - pos * pitch;
-    } else if (start == 0) {
-        rowX = margin; // beginning: current near the left edge
-    } else {
-        rowX = static_cast<float>(clientW) - margin - (visible * pitch - gap); // end
-    }
+    const int logicalStart = currentIndex - p; // may be negative at the start
+    visibleStart_ = logicalStart;
+    visibleWidth_ = visible;
+    const float rowX = static_cast<float>(clientW) / 2.0f - cellW / 2.0f -
+                       p * pitch;
 
     const float top = stripRect_.top + pad;
     for (int i = 0; i < visible; ++i) {
+        const int index = logicalStart + i;
+        if (index < 0 || index >= count) continue; // empty edge space
         ThumbCell cell;
-        cell.index = start + i;
+        cell.index = index;
         const float x = rowX + i * pitch;
         cell.rect = D2D1::RectF(x, top, x + cellW, top + cellH);
         cell.isCurrent = (cell.index == currentIndex);

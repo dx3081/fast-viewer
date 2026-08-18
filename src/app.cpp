@@ -210,6 +210,16 @@ LRESULT App::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
         if (filmstrip_.Visible() && filmstrip_.IsOverStrip(pt)) return 0;
         break;
     }
+    case WM_NCLBUTTONDBLCLK: {
+        // In normal window mode the title bar's close button (X, HTCLOSE) is
+        // live. A double-click on it would make DefWindowProc generate
+        // SC_CLOSE, closing the viewer. Fast Viewer only closes via Esc,
+        // right-click, or a deliberate single click on the X; swallow the
+        // double-click so it cannot close. Single-click X close is preserved
+        // (handled by the WM_NCLBUTTONDOWN/UP default path).
+        if (static_cast<int>(wParam) == HTCLOSE) return 0;
+        break;
+    }
     case WM_DESTROY:
         DebugMark(L"wm_destroy");
         KillTimer(hwnd_, kFilmstripHideTimer);

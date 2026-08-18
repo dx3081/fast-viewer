@@ -2,6 +2,26 @@
 
 Current phase: 1.0 RC — Release Preparation
 
+## 1.0 RC fix — double-click close bug (implemented)
+
+The Task B diagnosis identified that in normal window mode, a left
+double-click landing on the title-bar close button (X, HTCLOSE) fell through
+to DefWindowProc, which generated SC_CLOSE and closed the viewer. Client-area
+double-clicks were never involved.
+
+- Fix (src/app.cpp HandleMessage): intercept WM_NCLBUTTONDBLCLK when
+  wParam == HTCLOSE and return 0, so a double-click on the X cannot close.
+  Single-click X close is untouched (it flows through the
+  WM_NCLBUTTONDOWN/UP -> DefWindowProc -> SC_CLOSE path; WM_NCLBUTTONDBLCLK is
+  never generated for a single click). Client-area WM_LBUTTONDBLCLK, Esc,
+  right-click, and F11 behavior unchanged.
+- Verified: client-area double-click toggles immersive<->normal 10x (PASS);
+  X double-click does NOT close (PASS, WM_NCLBUTTONDBLCLK(HTCLOSE) and full
+  NC down/up/dblclk/up sequence); single-click X close preserved
+  (SC_CLOSE and WM_CLOSE each exit cleanly with code 0, the paths
+  DefWindowProc generates for a real X click); Esc closes; right-click
+  closes; F11 toggles; M0 50/50, M2 26/26, RC 21/21 pass; clean /W4 build.
+
 ## 1.0 RC fix — filmstrip edge centering (Task A)
 
 Human review rejected the old "natural edge alignment" behavior (first few

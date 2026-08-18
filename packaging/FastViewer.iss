@@ -51,7 +51,7 @@ Source: "{#MyAppDir}\{#MyAppExe}"; DestDir: "{app}"; Flags: ignoreversion
 [Registry]
 ; --- Application identity / progid (per-user) ---
 Root: HKCU; Subkey: "Software\Classes\FastViewer"; ValueType: string; ValueName: ""; ValueData: "Fast Viewer Image"; Flags: uninsdeletekey
-Root: HKCU; Subkey: "Software\Classes\FastViewer\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#MyAppExe},0"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\FastViewer\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExe}"",0"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\FastViewer\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExe}"" ""%1"""; Flags: uninsdeletekey
 
 ; --- "Open with" per-extension hooks (additive; never replaces defaults) ---

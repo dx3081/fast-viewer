@@ -88,6 +88,12 @@ Root: HKCU; Subkey: "Software\FastViewer\Capabilities\FileAssociations"; ValueTy
 Root: HKCU; Subkey: "Software\FastViewer\Capabilities\FileAssociations"; ValueType: string; ValueName: ".webp"; ValueData: "FastViewer"; Flags: uninsdeletevalue; Check: IsFormatChecked('.webp')
 Root: HKCU; Subkey: "Software\RegisteredApplications"; ValueType: string; ValueName: "Fast Viewer"; ValueData: "Software\FastViewer\Capabilities"; Flags: uninsdeletevalue
 
+[Run]
+; Optional completion-page action: open Windows Default Apps settings where the
+; user can confirm Fast Viewer (default: unchecked). Never launches Fast Viewer
+; itself. Uses the ms-settings protocol (ShellExecuteEx on the URI).
+Filename: "ms-settings:defaultapps"; Description: "Open Windows Default Apps settings"; Flags: nowait postinstall unchecked shellexec
+
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}"
 
@@ -154,7 +160,7 @@ begin
 
   NoteLbl := TNewStaticText.Create(AssnPage);
   NoteLbl.Parent := AssnPage.Surface;
-  NoteLbl.Caption := 'This does not change your current default image viewer.';
+  NoteLbl.Caption := 'Windows may require you to confirm Fast Viewer as the default app separately.';
   NoteLbl.Left := 24;
   NoteLbl.Top := 152;
   NoteLbl.Width := AssnPage.SurfaceWidth - 48;

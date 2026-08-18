@@ -121,7 +121,12 @@ void Window::ApplyDpiChanged(const RECT& suggestedRect) {
 }
 
 void Window::UpdateNormalRect() {
+    // Only a genuinely restored normal-window placement is a valid NormalRect.
+    // A maximized or minimized window reports a non-restored rect here (and
+    // maximized adds WS_MAXIMIZE); persisting it would corrupt the stored
+    // geometry. Immersive is additionally excluded via the immersive_ guard.
     if (immersive_) return;
+    if (IsZoomed(hwnd_) || IsIconic(hwnd_)) return;
     GetWindowRect(hwnd_, &normalRect_);
     hasNormalRect_ = true;
 }

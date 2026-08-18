@@ -205,6 +205,18 @@ LRESULT App::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
         }
         break;
     }
+    case WM_NCLBUTTONDBLCLK: {
+        // In normal window mode the caption double-click must toggle the mode
+        // exactly like the client-area double-click / F11. The system's default
+        // caption gesture (SC_MAXIMIZE / SC_RESTORE) must not run; HTCLOSE is
+        // deliberately untouched so the title-bar close button keeps standard X
+        // behavior. This never applies in immersive (no caption is present).
+        if (wParam == HTCAPTION && !immersive_) {
+            ToggleMode();
+            return 0;
+        }
+        break;
+    }
     case WM_LBUTTONDBLCLK: {
         POINT pt{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
         if (filmstrip_.Visible() && filmstrip_.IsOverStrip(pt)) return 0;

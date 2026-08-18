@@ -89,10 +89,11 @@ Root: HKCU; Subkey: "Software\FastViewer\Capabilities\FileAssociations"; ValueTy
 Root: HKCU; Subkey: "Software\RegisteredApplications"; ValueType: string; ValueName: "Fast Viewer"; ValueData: "Software\FastViewer\Capabilities"; Flags: uninsdeletevalue
 
 [Run]
-; Optional completion-page action: open Windows Default Apps settings where the
-; user can confirm Fast Viewer (default: unchecked). Never launches Fast Viewer
-; itself. Uses the ms-settings protocol (ShellExecuteEx on the URI).
-Filename: "ms-settings:defaultapps"; Description: "Open Windows Default Apps settings"; Flags: nowait postinstall unchecked shellexec
+; Completion-page action: "set Fast Viewer as the default image viewer".
+; Opens Windows Default Apps settings where Windows handles the final user
+; confirmation. Never launches Fast Viewer itself and never writes UserChoice.
+; Checked by default; the user can uncheck it before pressing Finish.
+Filename: "ms-settings:defaultapps"; Description: "Set Fast Viewer as the default image viewer"; Flags: nowait postinstall shellexec
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}"

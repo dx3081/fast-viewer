@@ -119,13 +119,11 @@ void Window::ApplyStyleAndPosition() {
         SetWindowPlacement(hwnd_, &wp);
     }
 
-    // Make the switch paint atomically: freeze the window so the intermediate
-    // geometry/frame states (e.g. "borderless window at the old rect",
-    // "fullscreen window with a title bar") are never shown to the user, then
-    // unlock and repaint the final state once. Without this, a second
-    // double-click during the visible half-state toggles from a half-state and
-    // the mode loop looks like I -> N -> A -> B -> C -> ...
-    LockWindowUpdate(hwnd_);
+    // Apply the new geometry and style. Note: do NOT wrap this in
+    // LockWindowUpdate — locking the window while the D2D HWND render target
+    // is resized/recreated leaves the presented surface stale (the screen then
+    // shows the previous mode's frame). ToggleMode() renders and presents the
+    // final state synchronously after this returns.
     SetWindowPos(hwnd_, nullptr, rc.left, rc.top,
                  rc.right - rc.left, rc.bottom - rc.top,
                  SWP_NOZORDER | SWP_NOACTIVATE);
@@ -134,8 +132,6 @@ void Window::ApplyStyleAndPosition() {
     SetWindowPos(hwnd_, nullptr, rc.left, rc.top,
                  rc.right - rc.left, rc.bottom - rc.top,
                  SWP_FRAMECHANGED | SWP_NOZORDER | SWP_NOACTIVATE);
-    LockWindowUpdate(nullptr);
-    InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
 void Window::ApplyDpiChanged(const RECT& suggestedRect) {

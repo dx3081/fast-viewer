@@ -797,11 +797,25 @@ void App::ToggleMode() {
     immersive_ = !immersive_;
     // Make the style/geometry switch visually atomic: suppress intermediate
     // renders during the transition (they are slow at high zoom and leave a
-    // visible "borderless window" half-state), then repaint once at the end.
+    // visible "borderless window" half-state).
     suppressResizeRender_ = true;
     window_.SetImmersive(immersive_);
     suppressResizeRender_ = false;
+    // The final client size / render target / view state are now settled.
+    // Refresh the view state for the final geometry, then force a synchronous
+    // WM_PAINT (UpdateWindow) so the recreated D2D target is presented inside
+    // a proper paint context — a bare DrawNow() outside WM_PAINT left the
+    // visible surface stale (one-step-behind frame with a gray/black band).
+    if (renderer_) {
+        if (viewMode_ == ViewMode::Fit) {
+            ResetViewToFit();
+        } else {
+            ClampPan();
+        }
+        LogView();
+    }
     InvalidateRect(hwnd_, nullptr, FALSE);
+    UpdateWindow(hwnd_);
     Log(std::format(L"mode={}", immersive_ ? L"immersive" : L"normal"));
 }
 

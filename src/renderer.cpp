@@ -34,12 +34,23 @@ void Renderer::EnsureTarget() {
     if (target_) {
         const D2D1_SIZE_U size = target_->GetPixelSize();
         if (size.width == width_ && size.height == height_) return;
-        target_.Reset();
-        textBrush_.Reset();
-        stripBgBrush_.Reset();
-        placeholderBrush_.Reset();
-        borderBrush_.Reset();
-        currentBorderBrush_.Reset();
+        // Resize the existing HWND target in place instead of resetting and
+        // recreating it. A fresh CreateHwndRenderTarget during a mode toggle
+        // can leave the presented surface stale (the window then shows the
+        // previous/intermediate frame with black borders until some unrelated
+        // full repaint). Resize keeps the same target/surface; the caller
+        // redraws immediately afterwards.
+        const HRESULT hr = target_->Resize(D2D1::SizeU(width_, height_));
+        if (hr == D2DERR_RECREATE_TARGET) {
+            target_.Reset();
+            textBrush_.Reset();
+            stripBgBrush_.Reset();
+            placeholderBrush_.Reset();
+            borderBrush_.Reset();
+            currentBorderBrush_.Reset();
+            EnsureTarget();
+        }
+        return;
     }
     if (width_ == 0 || height_ == 0 || !hwnd_ || !factory_) return;
 

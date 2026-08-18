@@ -41,7 +41,8 @@ std::shared_ptr<DecodedPixels> DecodeToPixels(IWICImagingFactory* factory,
                                               HRESULT* outHr = nullptr,
                                               bool* outBudgetExceeded = nullptr);
 
-// True if `path`'s extension is in the supported set (jpg/jpeg/png/bmp/tif/tiff).
+// True if `path`'s extension is in the supported set
+// (jpg/jpeg/png/bmp/tif/tiff/webp).
 bool IsSupportedExtension(const std::wstring& path);
 
 // Decodes a small EXIF-oriented thumbnail that fits within `maxDim` x `maxDim`

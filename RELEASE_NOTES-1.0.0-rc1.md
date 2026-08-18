@@ -15,9 +15,11 @@ background services, no tray process, no updater.
 
 ## Supported formats
 
-- JPEG / JPG, PNG, BMP, TIFF (via Windows Imaging Component)
+- JPEG / JPG, PNG, BMP, TIFF, WebP (via Windows Imaging Component)
 - GIF and RAW: not supported
 - HEIC / HEIF / AVIF: only if a system codec is installed
+- WebP is supported through the Windows imaging codec available on the
+  system; verified on the primary Windows 10 development environment
 
 ## Highlights
 
@@ -36,8 +38,8 @@ background services, no tray process, no updater.
   redistributable; static MSVC runtime)
 - Installer: per-user Inno Setup install to
   %LocalAppData%\Programs\Fast Viewer; no administrator rights; registers
-  Fast Viewer for "Open with" on .jpg/.jpeg/.png/.bmp/.tif/.tiff; clean
-  uninstall; never forces a default-app change
+  Fast Viewer for "Open with" on .jpg/.jpeg/.png/.bmp/.tif/.tiff/.webp;
+  clean uninstall; never forces a default-app change
 
 ## Notes for this RC
 

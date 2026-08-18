@@ -7,7 +7,8 @@
 #include <vector>
 
 // Asynchronous scan of the direct parent directory (no recursion), natural
-// filename ordering, restricted to the M0 supported extensions.
+// filename ordering, restricted to the supported extensions
+// (jpg/jpeg/png/bmp/tif/tiff/webp).
 class Navigation {
 public:
     struct Result {

@@ -60,6 +60,7 @@ Root: HKCU; Subkey: "Software\Classes\.png\OpenWithProgids"; ValueType: string; 
 Root: HKCU; Subkey: "Software\Classes\.bmp\OpenWithProgids"; ValueType: string; ValueName: "FastViewer"; ValueData: ""; Flags: uninsdeletevalue
 Root: HKCU; Subkey: "Software\Classes\.tif\OpenWithProgids"; ValueType: string; ValueName: "FastViewer"; ValueData: ""; Flags: uninsdeletevalue
 Root: HKCU; Subkey: "Software\Classes\.tiff\OpenWithProgids"; ValueType: string; ValueName: "FastViewer"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\.webp\OpenWithProgids"; ValueType: string; ValueName: "FastViewer"; ValueData: ""; Flags: uninsdeletevalue
 
 ; --- Application registration for Explorer "Open with" list ---
 Root: HKCU; Subkey: "Software\Classes\Applications\{#MyAppExe}"; Flags: uninsdeletekey
@@ -70,6 +71,7 @@ Root: HKCU; Subkey: "Software\Classes\Applications\{#MyAppExe}\SupportedTypes"; 
 Root: HKCU; Subkey: "Software\Classes\Applications\{#MyAppExe}\SupportedTypes"; ValueType: string; ValueName: ".bmp"; ValueData: ""; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\Applications\{#MyAppExe}\SupportedTypes"; ValueType: string; ValueName: ".tif"; ValueData: ""; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\Applications\{#MyAppExe}\SupportedTypes"; ValueType: string; ValueName: ".tiff"; ValueData: ""; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\Applications\{#MyAppExe}\SupportedTypes"; ValueType: string; ValueName: ".webp"; ValueData: ""; Flags: uninsdeletekey
 
 ; --- Capabilities (lets the user pick Fast Viewer in Settings/Default apps) ---
 Root: HKCU; Subkey: "Software\FastViewer"; Flags: uninsdeletekey
@@ -81,6 +83,7 @@ Root: HKCU; Subkey: "Software\FastViewer\Capabilities\FileAssociations"; ValueTy
 Root: HKCU; Subkey: "Software\FastViewer\Capabilities\FileAssociations"; ValueType: string; ValueName: ".bmp"; ValueData: "FastViewer"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\FastViewer\Capabilities\FileAssociations"; ValueType: string; ValueName: ".tif"; ValueData: "FastViewer"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\FastViewer\Capabilities\FileAssociations"; ValueType: string; ValueName: ".tiff"; ValueData: "FastViewer"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\FastViewer\Capabilities\FileAssociations"; ValueType: string; ValueName: ".webp"; ValueData: "FastViewer"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\RegisteredApplications"; ValueType: string; ValueName: "Fast Viewer"; ValueData: "Software\FastViewer\Capabilities"; Flags: uninsdeletevalue
 
 [UninstallDelete]

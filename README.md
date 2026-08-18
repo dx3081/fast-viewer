@@ -6,7 +6,7 @@ navigate, close, and you are back in Explorer. No library, no database, no
 cloud, no telemetry, no background services.
 
 - Target: Windows 10 x64
-- Formats: JPEG/JPG, PNG, BMP, TIFF (via Windows Imaging Component)
+- Formats: JPEG/JPG, PNG, BMP, TIFF, WebP (via Windows Imaging Component)
 - Size: a single ~500 KB executable, no install required for the portable
   build, no VC redistributable needed
 
@@ -58,6 +58,8 @@ never overrides that choice on its own.
 
 - GIF and RAW are not supported.
 - HEIC/HEIF/AVIF open only if a system codec is installed.
+- WebP is supported through the Windows imaging codec available on the
+  system; verified on the primary Windows 10 development environment.
 - The filmstrip draws over the bottom edge of the main image while visible.
 - Very large images (above ~512 MB decoded) are rejected with an error rather
   than risking memory exhaustion.

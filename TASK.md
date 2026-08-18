@@ -2,6 +2,38 @@
 
 Current phase: 1.0 RC — Release Preparation
 
+## 1.0 RC fix — WebP first-class support
+
+Human testing on the development machine proved that a real .webp file
+already opened and displayed correctly through the existing WIC decode path.
+The observed problem was that .webp was missing from directory
+navigation/filtering and installer registration — not a decode problem.
+
+- Root cause: the single runtime allowlist IsSupportedExtension()
+  (src/image_loader.cpp) listed jpg/jpeg/png/bmp/tif/tiff only; directory
+  scan (navigation.cpp) therefore excluded .webp. Direct launch worked
+  because main.cpp does no extension filtering.
+- Fix: .webp added to IsSupportedExtension() (one line). No decoder added,
+  no codec installed, no dependency added, no core decoder change — the
+  existing WIC path decodes WebP on this machine (verified: decode_ms logged,
+  first_render ok).
+- Installer: .webp registered alongside the other formats in OpenWithProgids,
+  Applications\fast_viewer.exe\SupportedTypes, and
+  FastViewer\Capabilities\FileAssociations; uninstall removes Fast Viewer's
+  own .webp registration only.
+- Docs: README.md and release notes now list WebP with wording reflecting the
+  WIC-based architecture ("supported through the Windows imaging codec
+  available on the system; verified on the primary Windows 10 development
+  environment"). No GIF/HEIC/AVIF/RAW associations added.
+- Verified: direct .webp launch, mixed-format natural sort (IMG_1.jpg ->
+  IMG_2.webp -> IMG_3.png -> IMG_4.webp -> IMG_10.jpg), Left/Right through
+  WebP in both directions, WebP-only directory, filmstrip WebP thumbnails +
+  thumbnail click + wheel navigation across formats, corrupt .webp fails
+  gracefully with navigation still usable and no thumbnail retry loop, idle
+  CPU 0% / no log growth, cold launch ~98 ms.
+- Release artifacts rebuilt (portable zip, installer, SHA-256 checksums).
+  Version stays 1.0.0-rc1. No GitHub Release, no v1.0.0 tag.
+
 ## 1.0 RC status
 
 RC UX POLISH is complete (commit 662a549). 1.0 RC release preparation is

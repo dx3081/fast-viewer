@@ -144,7 +144,8 @@ bool IsSupportedExtension(const std::wstring& path) {
     if (dot == std::wstring::npos) return false;
     const std::wstring ext = ToLower(path.substr(dot + 1));
     return ext == L"jpg" || ext == L"jpeg" || ext == L"png" ||
-           ext == L"bmp" || ext == L"tif" || ext == L"tiff";
+           ext == L"bmp" || ext == L"tif" || ext == L"tiff" ||
+           ext == L"webp";
 }
 
 std::shared_ptr<DecodedPixels> DecodeThumbnail(IWICImagingFactory* factory,

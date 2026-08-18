@@ -2,6 +2,35 @@
 
 Current phase: 1.0 RC — Release Preparation
 
+## 1.0 RC fix — filmstrip first-reveal centering
+
+Human testing observed that on the first reveal after launch, the filmstrip
+could briefly render in an incorrect (empty/left) layout, then shift to the
+correct centered position once navigation state finished updating.
+
+- Root cause: initialization-order race. RevealFilmstrip draws the first
+  frame using whatever navigation state exists at that moment. If the reveal
+  happens before the async directory scan completes, that frame is drawn with
+  count=0 (no navigation result yet). OnScanComplete then set displayIndex_
+  but did NOT trigger a redraw, so the visible strip kept the stale
+  pre-scan layout until an unrelated later event (decode/preload/user input)
+  happened to repaint it — perceived as a left-to-center jump.
+- Fix (src/app.cpp OnScanComplete): when the filmstrip is already visible at
+  scan completion, immediately recompute the layout with the now-final
+  navigation range (DrawNow + ScheduleThumbs). The first frame that carries
+  real layout now uses the final centered/edge position directly.
+- Behavior when the final layout genuinely cannot yet be determined (reveal
+  before scan done): the strip shows only the empty surface (no thumbnails,
+  no knowingly-wrong left-aligned cells) and populates once the scan lands —
+  matching the agreed preferred behavior. No animation, no fade, no visuals
+  changed; cache/worker/navigation architecture untouched.
+- Verified: launch at 250/500 (normal + race reveal) first cells-frame
+  centered at 1280; 1/500 left-edge; 500/500 right-edge; 1920-wide centered
+  at 960; 50,000-file directory race (scan ~40 ms) still first-cells-frame
+  centered; repeated hide/reveal unchanged; rapid navigation unchanged;
+  M2 26/26 and RC polish 21/21 pass; cold launch ~74 ms, idle CPU 0%, no log
+  growth. No new dependencies.
+
 ## 1.0 RC fix — WebP first-class support
 
 Human testing on the development machine proved that a real .webp file

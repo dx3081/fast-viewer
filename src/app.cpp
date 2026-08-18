@@ -423,6 +423,16 @@ void App::OnScanComplete() {
     } else {
         SchedulePreload();
     }
+
+    // RC fast fix: if the filmstrip was revealed before the directory scan
+    // completed, its first drawn frame used count=0 (no navigation state yet)
+    // and showed only the empty strip surface. Recompute the layout with the
+    // now-final range so a visible strip jumps straight to the correct
+    // centered/edge position instead of waiting for an unrelated redraw.
+    if (filmstrip_.Visible()) {
+        DrawNow();
+        ScheduleThumbs();
+    }
 }
 
 void App::OnDecodeDone(uint64_t id) {

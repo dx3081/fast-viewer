@@ -64,11 +64,15 @@ WebP 通过 Windows 图片处理组件（WIC）解码，已在当前 Windows 10 
 
 - DMZ
 - ChatGPT
+- Codex
 - DSH (DeepSeek Harness)
 
 ## 许可证
 
-许可证尚未确定。
+Copyright (C) 2026 DMZ
+
+本项目依据 GNU General Public License v3.0 授权，仅适用第 3 版
+（`GPL-3.0-only`）。完整条款见 [LICENSE](LICENSE)。
 
 ---
 
@@ -138,8 +142,12 @@ Right-click an image in Explorer → **Open with** → **Choose another app** �
 
 - DMZ
 - ChatGPT
+- Codex
 - DSH (DeepSeek Harness)
 
 ## License
 
-License not yet selected.
+Copyright (C) 2026 DMZ
+
+This project is licensed under the GNU General Public License version 3 only
+(`GPL-3.0-only`). See [LICENSE](LICENSE) for the full license text.

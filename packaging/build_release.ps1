@@ -9,24 +9,78 @@
 param(
     [string]$Staging = (Join-Path $PSScriptRoot '..\release'),
     [string]$BuildDir = 'build',
-    [string]$VcVars = 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat',
-    [string]$CmakeBin = 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin',
-    [string]$NinjaBin = 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja',
-    [string]$Iscc = 'C:\Users\xdu3\AppData\Local\Programs\Inno Setup 6\ISCC.exe'
+    # Optional explicit tool paths; when empty, each tool is auto-discovered.
+    [string]$VcVars = '',   # vcvars64.bat (MSVC Build Tools)
+    [string]$CmakeBin = '', # directory containing cmake.exe
+    [string]$NinjaBin = '', # directory containing ninja.exe
+    [string]$Iscc = ''      # ISCC.exe (Inno Setup 6)
 )
 $ErrorActionPreference = 'Stop'
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $version = '1.0.0-rc1'
 $exeName = 'fast_viewer.exe'
 
-# Tool existence checks with clear errors (all paths are overridable via params).
+# --- Tool auto-discovery (no machine-specific hardcoded defaults) ------------
+# 1. Visual Studio installation (Build Tools or full VS) via vswhere.
+$vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+$vsInstall = ''
+if (Test-Path $vswhere) {
+    $vsInstall = (& $vswhere -latest -products * `
+        -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+        -property installationPath 2>$null | Select-Object -First 1)
+}
+
+# 2. vcvars64.bat: explicit param, else the vswhere installation.
+if (-not $VcVars -and $vsInstall) {
+    $candidate = Join-Path $vsInstall 'VC\Auxiliary\Build\vcvars64.bat'
+    if (Test-Path $candidate) { $VcVars = $candidate }
+}
+
+# 3. CMake: explicit param, else PATH, else the VS-bundled copy.
+if (-not $CmakeBin) {
+    $cmd = Get-Command cmake -ErrorAction SilentlyContinue
+    if ($cmd) {
+        $CmakeBin = Split-Path $cmd.Source
+    } elseif ($vsInstall) {
+        $candidate = Join-Path $vsInstall 'Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin'
+        if (Test-Path $candidate) { $CmakeBin = $candidate }
+    }
+}
+
+# 4. Ninja: explicit param, else PATH, else the VS-bundled copy.
+if (-not $NinjaBin) {
+    $cmd = Get-Command ninja -ErrorAction SilentlyContinue
+    if ($cmd) {
+        $NinjaBin = Split-Path $cmd.Source
+    } elseif ($vsInstall) {
+        $candidate = Join-Path $vsInstall 'Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja'
+        if (Test-Path $candidate) { $NinjaBin = $candidate }
+    }
+}
+
+# 5. ISCC.exe: explicit param, else PATH, else common install locations.
+if (-not $Iscc) {
+    $cmd = Get-Command ISCC.exe -ErrorAction SilentlyContinue
+    if ($cmd) {
+        $Iscc = $cmd.Source
+    } else {
+        foreach ($candidate in @(
+            (Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'),
+            (Join-Path $env:ProgramFiles 'Inno Setup 6\ISCC.exe'),
+            (Join-Path $env:LOCALAPPDATA 'Programs\Inno Setup 6\ISCC.exe'))) {
+            if (Test-Path $candidate) { $Iscc = $candidate; break }
+        }
+    }
+}
+
+# 6. Fail loudly with actionable guidance when a tool cannot be located.
 foreach ($tool in @(
-    @{ Name = 'vcvars64.bat (MSVC Build Tools)'; Path = $VcVars },
-    @{ Name = 'cmake (VS CMake)'; Path = $CmakeBin },
-    @{ Name = 'ninja (VS Ninja)'; Path = $NinjaBin },
-    @{ Name = 'ISCC.exe (Inno Setup 6)'; Path = $Iscc })) {
-    if (-not (Test-Path $tool.Path)) {
-        throw "Required tool not found: $($tool.Name) at '$($tool.Path)'. Pass the correct path via -VcVars/-CmakeBin/-NinjaBin/-Iscc."
+    @{ Name = 'vcvars64.bat (MSVC Build Tools)'; Path = $VcVars; Param = '-VcVars' },
+    @{ Name = 'cmake'; Path = $CmakeBin; Param = '-CmakeBin' },
+    @{ Name = 'ninja'; Path = $NinjaBin; Param = '-NinjaBin' },
+    @{ Name = 'ISCC.exe (Inno Setup 6)'; Path = $Iscc; Param = '-Iscc' })) {
+    if (-not $tool.Path -or -not (Test-Path $tool.Path)) {
+        throw "Required tool not found: $($tool.Name). Auto-discovery failed - install it or pass the exact path via $($tool.Param)."
     }
 }
 

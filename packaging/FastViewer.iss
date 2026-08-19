@@ -13,7 +13,23 @@
 #define MyAppName "Fast Viewer"
 #define MyAppVersion "1.0.0-rc1"
 #define MyAppExe "fast_viewer.exe"
-#define MyAppDir "C:\DSWorkspace\fast-viewer\build"
+; All machine-specific inputs are overridable ISPP defines:
+;   /DMyAppBuildDir=<path>  (default: repo\build relative to this script)
+;   /DMyIcon=<path>         (default: repo\src\resources\fast_viewer.ico)
+;   /DMyOutputDir=<path>    (default: repo\release)
+;   /DMyLicense=<path>      (default: repo\LICENSE, GPL-3.0-only)
+#ifndef MyAppBuildDir
+#define MyAppBuildDir "..\build"
+#endif
+#ifndef MyIcon
+#define MyIcon "..\src\resources\fast_viewer.ico"
+#endif
+#ifndef MyOutputDir
+#define MyOutputDir "..\release"
+#endif
+#ifndef MyLicense
+#define MyLicense "..\LICENSE"
+#endif
 
 [Setup]
 AppId={{C3F7A8B2-6D41-4E7A-9C5E-2B8A1F0D4E33}
@@ -26,7 +42,7 @@ DefaultGroupName=Fast Viewer
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=commandline
-OutputDir=..\release
+OutputDir={#MyOutputDir}
 OutputBaseFilename=FastViewer-1.0.0-rc1-setup
 Compression=lzma2
 SolidCompression=yes
@@ -35,7 +51,8 @@ ArchitecturesInstallIn64BitMode=x64compatible
 ArchitecturesAllowed=x64compatible
 UninstallDisplayIcon={app}\{#MyAppExe}
 UninstallDisplayName={#MyAppName}
-SetupIconFile=C:\DSWorkspace\fast-viewer\src\resources\fast_viewer.ico
+SetupIconFile={#MyIcon}
+LicenseFile={#MyLicense}
 VersionInfoVersion=1.0.0.0
 VersionInfoProductVersion=1.0.0.0
 VersionInfoDescription=Fast Viewer
@@ -46,7 +63,8 @@ MinVersion=10.0.17763
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
-Source: "{#MyAppDir}\{#MyAppExe}"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#MyAppBuildDir}\{#MyAppExe}"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#MyLicense}"; DestDir: "{app}"; Flags: ignoreversion
 
 [Registry]
 ; --- Application identity / progid (per-user) ---

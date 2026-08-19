@@ -1,25 +1,36 @@
 # build_release.ps1 — reproducible 1.0 RC1 release assembly (release-only tool).
 # Requires: MSVC Build Tools (vcvars64), CMake, Ninja, Inno Setup 6 (ISCC.exe).
 # Produces, under the staging dir (default: repo root .\release):
-#   FastViewer-<version>-portable\   (fast_viewer.exe + README.txt)
+#   FastViewer-<version>-portable\   (fast_viewer.exe + README.txt + LICENSE)
 #   FastViewer-<version>-portable.zip
 #   FastViewer-<version>-setup.exe   (per-user Inno installer)
 #   SHA256SUMS.txt
 # No binaries are committed to Git; the staging dir is gitignored.
 param(
-    [string]$Staging = (Join-Path $PSScriptRoot '..\release')
+    [string]$Staging = (Join-Path $PSScriptRoot '..\release'),
+    [string]$BuildDir = 'build',
+    [string]$VcVars = 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat',
+    [string]$CmakeBin = 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin',
+    [string]$NinjaBin = 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja',
+    [string]$Iscc = 'C:\Users\xdu3\AppData\Local\Programs\Inno Setup 6\ISCC.exe'
 )
 $ErrorActionPreference = 'Stop'
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $version = '1.0.0-rc1'
 $exeName = 'fast_viewer.exe'
 
-$vcvars = 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat'
-$cmakeBin = 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin'
-$ninjaBin = 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja'
-$iscc = 'C:\Users\xdu3\AppData\Local\Programs\Inno Setup 6\ISCC.exe'
+# Tool existence checks with clear errors (all paths are overridable via params).
+foreach ($tool in @(
+    @{ Name = 'vcvars64.bat (MSVC Build Tools)'; Path = $VcVars },
+    @{ Name = 'cmake (VS CMake)'; Path = $CmakeBin },
+    @{ Name = 'ninja (VS Ninja)'; Path = $NinjaBin },
+    @{ Name = 'ISCC.exe (Inno Setup 6)'; Path = $Iscc })) {
+    if (-not (Test-Path $tool.Path)) {
+        throw "Required tool not found: $($tool.Name) at '$($tool.Path)'. Pass the correct path via -VcVars/-CmakeBin/-NinjaBin/-Iscc."
+    }
+}
 
-$buildDir = Join-Path $repo 'build'
+$buildDir = Join-Path $repo $BuildDir
 $staging = [System.IO.Path]::GetFullPath($Staging)
 $portableDir = Join-Path $staging "FastViewer-$version-portable"
 
@@ -38,6 +49,7 @@ if (Test-Path $portableDir) { Remove-Item $portableDir -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $portableDir | Out-Null
 Copy-Item (Join-Path $buildDir $exeName) $portableDir
 Copy-Item (Join-Path $repo 'README.md') (Join-Path $portableDir 'README.txt')
+Copy-Item (Join-Path $repo 'LICENSE') (Join-Path $portableDir 'LICENSE')
 
 # 3. Portable zip
 Write-Host '==> Portable zip'
@@ -49,12 +61,8 @@ if (Test-Path $zip) { Remove-Item $zip }
 # 4. Installer
 Write-Host '==> Installer'
 $iss = Join-Path $repo 'packaging\FastViewer.iss'
-# rewrite staging output path into a temp copy so ISCC emits into $staging
-$issText = Get-Content $iss -Raw
-$issText = $issText -replace 'OutputDir=.*', "OutputDir=$($staging -replace '\\','\')"
-$issTmp = Join-Path $env:TEMP 'FastViewer.iss'
-Set-Content -Path $issTmp -Value $issText -Encoding ASCII
-& $iscc /Qp $issTmp
+# Compile in place, passing the build dir and staging dir as ISPP defines.
+& $iscc /Qp "/DMyAppBuildDir=$buildDir" "/DMyOutputDir=$staging" $iss
 if ($LASTEXITCODE -ne 0) { throw 'installer build failed' }
 
 # 5. Checksums

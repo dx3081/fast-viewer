@@ -56,8 +56,10 @@ std::wstring FileNameOf(const std::wstring& path) {
 
 App::~App() {
     DebugMark(L"app dtor begin");
-    decoder_->Stop();
-    thumbLoader_->Stop();
+    // Initialize() may fail before these workers are created; stop only if
+    // they exist. (Other members are unique_ptrs and are null-safe.)
+    if (decoder_) decoder_->Stop();
+    if (thumbLoader_) thumbLoader_->Stop();
     DebugMark(L"app dtor end");
 }
 

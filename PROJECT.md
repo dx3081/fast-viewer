@@ -88,6 +88,8 @@ The following features are OUT OF SCOPE unless the human owner explicitly change
 - albums
 - tags
 - slideshow system
+- (1.1 note: view-only rotation, Ctrl+C copy and a Picasa-style bottom button bar
+  were approved by the owner on 2026-10-28; the file is never modified.)
 - print workflow
 - plugin system
 - extension marketplace
@@ -110,10 +112,10 @@ Primary V1 formats:
 - WebP
 - TIFF
 
-- GIF is not required.
-- RAW formats are explicitly out of scope.
-- HEIC / HEIF / AVIF: allow them if the installed Windows/WIC codec can decode them; do not bundle large third-party codecs solely to support them; absence of a system codec is not a project failure.
-- Prefer capability-based WIC decoding rather than maintaining a large hardcoded format subsystem.
+- GIF, including animation (1.1, owner-approved 2026-10-28).
+- HEIC / HEIF / AVIF / camera RAW: supported when the installed Windows/WIC codec can decode them (1.1, owner-approved 2026-10-28); do not bundle large third-party codecs; absence of a system codec is not a project failure (the viewer names the missing extension).
+- RAW is "light": the embedded camera preview for normal viewing, the real RAW decode only when zooming.
+- Supported extensions are asked from WIC at runtime (capability-based), not hardcoded.
 
 ## Correct presentation requirements
 

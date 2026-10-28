@@ -38,6 +38,8 @@ The input/action layer must be designed so the right-click mapping (and mouse ma
 - `Esc` -> close Fast Viewer
 - `F11` -> toggle immersive borderless mode / normal window mode
 - `1` -> toggle 100% view / fit view
+- `R` / `Shift+R` -> rotate the view clockwise / counter-clockwise (1.1; view only, reset per image)
+- `Ctrl+C` -> copy the image (as shown, full resolution) and the file to the clipboard (1.1)
 
 F11 and double-click intentionally provide two equivalent ways to toggle viewing mode.
 
@@ -64,6 +66,15 @@ F11 and double-click intentionally provide two equivalent ways to toggle viewing
 - Clicking a thumbnail navigates directly to that image.
 - The filmstrip behaves like a tiny virtualized renderer.
 
+## Bottom bar (1.1, Picasa-style)
+
+- The filmstrip area is a bottom bar: a soft dark shade rising from the bottom
+  edge (no solid strip), the photo shows through.
+- Left: zoom in, zoom out, 1:1. Right: rotate left, rotate right. Previous /
+  next arrows sit just outside the thumbnail row. Buttons highlight on hover.
+- Windows narrower than ~900 logical px keep only thumbnails + arrows.
+- The current thumbnail is drawn slightly larger with a white frame.
+
 ## Lightweight status information
 
 When the filmstrip is visible, lightweight information may also be shown:
@@ -71,6 +82,9 @@ When the filmstrip is visible, lightweight information may also be shown:
 - filename
 - dimensions
 - current index / total image count
+
+(1.1: shown centered above the thumbnails as `name (W x H)   n / total`,
+with a 1 px shadow.)
 
 This information must not be permanently visible.
 

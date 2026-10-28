@@ -1,6 +1,6 @@
 # Fast Viewer — Task State
 
-Current phase: 1.0 RC — Release Preparation
+Current phase: 1.1 overhaul (branch a2-overhaul, 1.1.0-beta1) - see CURRENT.md for status, RELEASE_NOTES-1.1.0-beta1.md for changes. The sections below are the 1.0 RC history.
 
 ## 1.0 RC fix — preserve WS_VISIBLE across mode toggles (CORE)
 

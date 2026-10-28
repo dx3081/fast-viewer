@@ -60,6 +60,28 @@ When minimized or backgrounded: pause or heavily reduce speculative preload work
 - **Zoom and pan:** 60 FPS. Zoom/pan should primarily use rendering transforms rather than repeated disk decode operations.
 - **Large directories:** a directory containing 50,000 images must not freeze the UI. Initial image display must not wait for the full directory to be processed.
 
+## Screen-size decode (1.1)
+
+- Normal viewing never decodes at full resolution. Each image is decoded to fit
+  the monitor work area: the codec reduces natively where it can (JPEG decodes
+  at 1/2, 1/4, 1/8 size), then the Fant filter scales to the exact size.
+- Zooming past that copy (wheel, 1:1, a larger monitor) decodes the current
+  image at full resolution once ("detail"); it is dropped on navigation.
+- Cache entries are therefore small (~10-15 MB on a 1440p screen instead of
+  ~50-100 MB per photo), so the preload neighborhood (+1, +2 in the travel
+  direction, -1 behind) always fits and is filled in a chain.
+- Rotated (EXIF) images are decoded first and rotated in memory. Never put the
+  WIC flip/rotator directly on a decoder frame: it re-decodes the JPEG column by
+  column (measured 2-3.5 s for a 12 MP portrait photo).
+- Presentation does not wait for vsync (D2D1_PRESENT_OPTIONS_IMMEDIATELY; DWM
+  composes the window, so no tearing). Measured with the default present:
+  30-45 ms blocked in EndDraw per frame.
+- Holding an arrow key shows intermediate decoded images instead of only the
+  last requested one.
+- The first decode starts before the window and Direct2D target are created.
+
+Benchmark: `tools/nav_bench.ps1` (navigation latency + UI-thread stalls).
+
 ## Thumbnail policy
 
 - Main-image decode and filmstrip thumbnails are separate concerns.

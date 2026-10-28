@@ -11,9 +11,11 @@ Fast Viewer 是一个小巧、快速的 Windows 原生图片查看器。双击�
 
 ## 支持格式
 
-- JPEG / JPG、PNG、BMP、TIFF / TIF、WebP（不支持 GIF / RAW）
+- JPEG / JPG、PNG、BMP、TIFF / TIF、WebP、GIF（动图会播放）
+- HEIC / HEIF（苹果手机照片）、AVIF、相机 RAW（.dng .cr2 .cr3 .nef .arw 等）：需要电脑上装了对应的 Windows 扩展（微软商店）。没装时会提示需要哪个扩展。
+- RAW 平时显示相机自带的预览图，秒开；放大看细节时才解 RAW 原片。
 
-WebP 通过 Windows 图片处理组件（WIC）解码，已在当前 Windows 10 开发环境验证；实际解码能力取决于系统自带的 WIC 编解码器。
+能打开哪些格式由 Windows 图片处理组件（WIC）决定：装了新的系统解码器，Fast Viewer 不用更新就能用。
 
 ## 操作
 
@@ -23,7 +25,8 @@ WebP 通过 Windows 图片处理组件（WIC）解码，已在当前 Windows 10 
 - 左键拖拽：放大超出视口后平移
 - 双击：切换沉浸查看 / 普通窗口模式
 - 右键：关闭
-- 移到窗口底部：显示胶片条；在胶片条上滚轮：上一张 / 下一张；点击缩略图：跳转到该图片
+- 移到窗口底部：显示底栏（胶片条 + 按钮）；在胶片条上滚轮：上一张 / 下一张；点击缩略图：跳转到该图片
+- 底栏按钮：左边 放大 / 缩小 / 1:1，右边 向左转 / 向右转，缩略图两侧 上一张 / 下一张
 
 键盘：
 
@@ -31,6 +34,8 @@ WebP 通过 Windows 图片处理组件（WIC）解码，已在当前 Windows 10 
 - Esc：关闭
 - F11：切换沉浸查看 / 普通窗口模式
 - 1：切换 100% / 适应窗口
+- R / Shift+R：向右转 / 向左转（只转显示，不改文件；换图后复原）
+- Ctrl+C：复制当前图片（可直接粘贴到聊天、文档；在资源管理器里粘贴得到文件）
 
 ## 安装
 
@@ -89,9 +94,11 @@ Fast Viewer is a small, fast native Windows image viewer. Double-click an image 
 
 ## Supported Formats
 
-- JPEG / JPG, PNG, BMP, TIFF / TIF, WebP (GIF / RAW are not supported)
+- JPEG / JPG, PNG, BMP, TIFF / TIF, WebP, GIF (animations play)
+- HEIC / HEIF, AVIF, camera RAW (.dng .cr2 .cr3 .nef .arw ...): when the matching Windows (Microsoft Store) extension is installed. If it is missing, the viewer says which extension is needed.
+- RAW files show the camera's embedded preview instantly; zooming in develops the RAW data.
 
-WebP is decoded through the Windows Imaging Component (WIC) and has been verified on the current Windows 10 development environment; decoding availability depends on the WIC codecs present on the system.
+Supported formats come from the Windows Imaging Component (WIC): a newly installed system codec works without updating Fast Viewer.
 
 ## Controls
 
@@ -101,7 +108,8 @@ Mouse:
 - Left drag: pan when zoomed beyond the viewport
 - Double-click: toggle immersive / normal window mode
 - Right-click: close
-- Move the pointer to the bottom edge: show the filmstrip; wheel over the filmstrip: previous / next image; click a thumbnail: jump to that image
+- Move the pointer to the bottom edge: show the bottom bar (filmstrip + buttons); wheel over the filmstrip: previous / next image; click a thumbnail: jump to that image
+- Bottom bar buttons: zoom in / zoom out / 1:1 on the left, rotate left / right on the right, previous / next beside the thumbnails
 
 Keyboard:
 
@@ -109,6 +117,8 @@ Keyboard:
 - Esc: close
 - F11: toggle immersive / normal window mode
 - 1: toggle 100% / fit view
+- R / Shift+R: rotate right / left (view only, the file is never changed; resets per image)
+- Ctrl+C: copy the image (paste into chats/documents; paste in Explorer gives the file)
 
 ## Installation
 

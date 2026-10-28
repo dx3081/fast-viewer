@@ -77,15 +77,32 @@ bool App::Initialize(HINSTANCE inst, const std::wstring& imagePath) {
     t0Micros_ = NowMicros();
     InitTimingLog();
 
+    // Start decoding the first image right away, in parallel with creating the
+    // window and the Direct2D target (together ~100-250 ms on a cold start).
+    // The window opens on the monitor under the cursor, so that monitor's
+    // work area is the decode box.
+    {
+        POINT pt{};
+        GetCursorPos(&pt);
+        MONITORINFO mi{};
+        mi.cbSize = sizeof(mi);
+        if (GetMonitorInfoW(MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST), &mi)) {
+            boxW_ = static_cast<UINT>(mi.rcWork.right - mi.rcWork.left);
+            boxH_ = static_cast<UINT>(mi.rcWork.bottom - mi.rcWork.top);
+        }
+    }
+    decoder_ = std::make_unique<ImageDecoder>();
+    decoder_->Start(nullptr);
+    RequestUserDecode(imagePath, -1, false);
+
     if (!window_.Create(inst, FileNameOf(imagePath), this)) return false;
     hwnd_ = window_.Hwnd();
 
     renderer_ = std::make_unique<Renderer>();
     if (!renderer_->Initialize(hwnd_)) return false;
     UpdateDecodeBox();
+    decoder_->SetNotifyWindow(hwnd_);
 
-    decoder_ = std::make_unique<ImageDecoder>();
-    decoder_->Start(hwnd_);
     cache_ = std::make_unique<ImageCache>();
     nav_ = std::make_unique<Navigation>();
     thumbCache_ = std::make_unique<ImageCache>(kThumbCacheBudget);
@@ -93,8 +110,7 @@ bool App::Initialize(HINSTANCE inst, const std::wstring& imagePath) {
     thumbLoader_->Start(hwnd_);
 
     // First image display must not wait for directory discovery or any decode
-    // on the UI thread: the initial decode runs on the decode worker.
-    RequestUserDecode(imagePath, -1, false);
+    // on the UI thread: the initial decode is already running on the worker.
     ShowWindow(hwnd_, SW_SHOW);
     UpdateWindow(hwnd_);
 

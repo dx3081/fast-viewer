@@ -1,4 +1,4 @@
-# build_release.ps1 — reproducible 1.0 RC1 release assembly (release-only tool).
+# build_release.ps1 — reproducible 1.1 release assembly (release-only tool).
 # Requires: MSVC Build Tools (vcvars64), CMake, Ninja, Inno Setup 6 (ISCC.exe).
 # Produces, under the staging dir (default: repo root .\release):
 #   FastViewer-<version>-portable\   (fast_viewer.exe + README.txt + LICENSE)
@@ -17,7 +17,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$version = '1.0.0-rc1'
+$version = '1.1.0-beta1'
 $exeName = 'fast_viewer.exe'
 
 # --- Tool auto-discovery (no machine-specific hardcoded defaults) ------------

@@ -4,10 +4,10 @@ cmake_minimum_required(VERSION 3.20)
 # version.h is generated from this block so the executable's version metadata
 # (via src/resources/app.rc) always matches the declared release version.
 set(FAST_VIEWER_VERSION_MAJOR 1)
-set(FAST_VIEWER_VERSION_MINOR 0)
+set(FAST_VIEWER_VERSION_MINOR 1)
 set(FAST_VIEWER_VERSION_PATCH 0)
-set(FAST_VIEWER_VERSION_SUFFIX "rc1")
-set(FAST_VIEWER_VERSION_DISPLAY "1.0.0-rc1")
+set(FAST_VIEWER_VERSION_SUFFIX "beta1")
+set(FAST_VIEWER_VERSION_DISPLAY "1.1.0-beta1")
 
 project(fast_viewer
     VERSION ${FAST_VIEWER_VERSION_MAJOR}.${FAST_VIEWER_VERSION_MINOR}.${FAST_VIEWER_VERSION_PATCH}

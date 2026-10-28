@@ -38,7 +38,7 @@ constexpr UINT64 kMaxDecodedBytes = 512ULL * 1024 * 1024; // 512 MB per image
 // Decodes `path` to raw 32bpp premultiplied BGRA pixels with EXIF orientation
 // applied. `maxBytes` is the decoded-bytes ceiling for this request.
 // `boxW`/`boxH` (both > 0) request a screen-size decode: an image larger than
-// the box is scaled down (high-quality cubic) to fit inside it, which is far
+// the box is scaled down (codec-native reduction + Fant filter) to fit inside it, which is far
 // faster and smaller than a full decode; fullWidth/fullHeight still report the
 // original size. Pass 0/0 for a full-resolution decode.
 // Returns nullptr on corrupt/unsupported/oversized/budget-exceeded failures;

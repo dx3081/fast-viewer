@@ -39,7 +39,10 @@ public:
     ImageDecoder() = default;
     ~ImageDecoder() { Stop(); }
 
+    // notifyHwnd may be null: the first decode can start before the window
+    // exists; finished results are then announced by SetNotifyWindow().
     void Start(HWND notifyHwnd);
+    void SetNotifyWindow(HWND hwnd);
     void Stop();
 
     // UI thread API. Each call replaces the pending job (latest-wins, so the

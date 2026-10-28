@@ -1,6 +1,8 @@
 #include "decoder.h"
 
 #include <chrono>
+#include <utility>
+#include <vector>
 
 namespace {
 
@@ -26,12 +28,27 @@ Microsoft::WRL::ComPtr<IWICImagingFactory> CreateWicFactory() {
 } // namespace
 
 void ImageDecoder::Start(HWND hwnd) {
-    hwnd_ = hwnd;
+    {
+        std::lock_guard<std::mutex> lock(mtx_);
+        hwnd_ = hwnd;
+    }
     if (!threadDecode_.joinable()) {
         threadDecode_ = std::thread([this] { DecodeWorkerMain(); });
     }
     if (!threadPreload_.joinable()) {
         threadPreload_ = std::thread([this] { PreloadWorkerMain(); });
+    }
+}
+
+void ImageDecoder::SetNotifyWindow(HWND hwnd) {
+    std::vector<std::pair<uint64_t, bool>> ready;
+    {
+        std::lock_guard<std::mutex> lock(mtx_);
+        hwnd_ = hwnd;
+        for (const auto& [id, r] : results_) ready.emplace_back(id, r->isPreload);
+    }
+    for (const auto& [id, preload] : ready) {
+        PostMessageW(hwnd, preload ? kMsgPreloadDone : kMsgDecodeDone, static_cast<WPARAM>(id), 0);
     }
 }
 
@@ -104,12 +121,14 @@ void ImageDecoder::DecodeWorkerMain() {
         result->failed = !result->pixels;
         result->decodeMicros = NowMicros() - t0;
 
+        HWND notify = nullptr;
         {
             std::lock_guard<std::mutex> lock(mtx_);
             ++completedDecodes_;
             results_[result->id] = result;
+            notify = hwnd_;
         }
-        PostMessageW(hwnd_, kMsgDecodeDone, static_cast<WPARAM>(result->id), 0);
+        if (notify) PostMessageW(notify, kMsgDecodeDone, static_cast<WPARAM>(result->id), 0);
     }
     CoUninitialize();
 }
@@ -153,12 +172,14 @@ void ImageDecoder::PreloadWorkerMain() {
         result->failed = !result->pixels;
         result->decodeMicros = NowMicros() - t0;
 
+        HWND notify = nullptr;
         {
             std::lock_guard<std::mutex> lock(mtx_);
             ++completedPreloads_;
             results_[result->id] = result;
+            notify = hwnd_;
         }
-        PostMessageW(hwnd_, kMsgPreloadDone, static_cast<WPARAM>(result->id), 0);
+        if (notify) PostMessageW(notify, kMsgPreloadDone, static_cast<WPARAM>(result->id), 0);
         preloadBusy_.store(false);
     }
     CoUninitialize();

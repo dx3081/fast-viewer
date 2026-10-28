@@ -374,7 +374,7 @@ std::shared_ptr<DecodedPixels> DecodeToPixels(IWICImagingFactory* factory,
         } else {
             reduced = NativeDownscale(factory, frame.Get(), sw, sh, tw, th);
         }
-        hr = scaler->Initialize(reduced.Get(), tw, th, WICBitmapInterpolationModeHighQualityCubic);
+        hr = scaler->Initialize(reduced.Get(), tw, th, WICBitmapInterpolationModeFant);
         if (FAILED(hr)) return fail(hr);
         source = scaler;
     }

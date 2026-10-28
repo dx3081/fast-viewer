@@ -72,6 +72,7 @@ private:
     void ScheduleThumbs();
     void OnThumbDone(uint64_t gen);
     void BuildFilmstripDraw(FilmstripDraw& out);
+    void DoBarAction(BarAction a);
     std::wstring BuildInfoText();
     float DpiScale() const;
 

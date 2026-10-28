@@ -33,7 +33,11 @@ bool Window::Create(HINSTANCE inst, const std::wstring& title, App* handler) {
     wc.style = CS_DBLCLKS | CS_HREDRAW | CS_VREDRAW;
     wc.lpfnWndProc = &Window::WndProcThunk;
     wc.hInstance = inst;
-    wc.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
+    wc.hIcon = LoadIconW(inst, L"IDI_APP_ICON"); // taskbar / Alt+Tab icon
+    if (!wc.hIcon) wc.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
+    wc.hIconSm = static_cast<HICON>(LoadImageW(inst, L"IDI_APP_ICON", IMAGE_ICON,
+                                               GetSystemMetrics(SM_CXSMICON),
+                                               GetSystemMetrics(SM_CYSMICON), 0));
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
     wc.lpszClassName = kClassName;
     if (!RegisterClassExW(&wc) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {

@@ -11,6 +11,16 @@ struct ThumbCell {
     bool isCurrent = false;
 };
 
+// Picasa-style control buttons in the bottom bar.
+enum class BarAction { None, ZoomIn, ZoomOut, Toggle100, RotateCCW, RotateCW, Prev, Next };
+
+struct BarButton {
+    BarAction action = BarAction::None;
+    D2D1_RECT_F rect{};
+    const wchar_t* glyph = L"";
+    bool iconFont = false; // Segoe MDL2 Assets glyph (else ordinary text)
+};
+
 // Filmstrip state + layout (UI thread only; rendering happens in Renderer).
 // Constants are centralized here as future viewer.conf candidates.
 // RC polish: smaller strip (68 px thumbnails), current cell visually centered.
@@ -25,6 +35,12 @@ public:
     static constexpr UINT kHideDelayMs = 600;
     static constexpr int kMaxVisible = 11;
     static constexpr int kMinVisible = 5;
+    static constexpr float kButtonW = 34.0f;     // control button, logical px
+    static constexpr float kButtonH = 28.0f;
+    static constexpr float kButtonGap = 6.0f;
+    static constexpr float kArrowW = 28.0f;      // previous/next arrows beside the thumbnails
+    static constexpr float kArrowH = 44.0f;
+    static constexpr float kSideGroupsMinW = 900.0f; // narrower windows: thumbnails + arrows only
 
     void Update(UINT clientW, UINT clientH, float dpiScale, int count, int currentIndex);
 
@@ -42,6 +58,10 @@ public:
     const std::vector<ThumbCell>& Cells() const { return cells_; }
     D2D1_RECT_F StripRect() const { return stripRect_; }
     int CurrentIndex() const { return currentIndex_; }
+    const std::vector<BarButton>& Buttons() const { return buttons_; }
+    BarAction HitButton(POINT pt) const;
+    BarAction Hover() const { return hover_; }
+    bool SetHover(BarAction a) { const bool changed = a != hover_; hover_ = a; return changed; }
     float DpiScale() const { return dpiScale_; }
 
 private:
@@ -53,4 +73,6 @@ private:
     int visibleWidth_ = 0;   // logical row width (cells skipped at edges)
     D2D1_RECT_F stripRect_{};
     std::vector<ThumbCell> cells_;
+    std::vector<BarButton> buttons_;
+    BarAction hover_ = BarAction::None;
 };

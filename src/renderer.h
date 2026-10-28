@@ -24,11 +24,21 @@ struct ThumbCellDraw {
     bool isCurrent = false;
 };
 
+// A control button to draw in the bottom bar.
+struct BarButtonDraw {
+    D2D1_RECT_F rect{};
+    const wchar_t* glyph = L"";
+    bool iconFont = false;
+    bool hovered = false;
+};
+
 // Filmstrip overlay description for one frame.
 struct FilmstripDraw {
     bool visible = false;
+    float dpi = 1.0f;          // DPI scale (text and line sizes)
     D2D1_RECT_F stripRect{};
     std::vector<ThumbCellDraw> cells;
+    std::vector<BarButtonDraw> buttons;
     std::wstring infoText;
 };
 
@@ -52,8 +62,10 @@ public:
 
 private:
     void EnsureTarget();
-    void EnsureText();
+    void EnsureText(float dpi);
     void DrawFilmstrip(const FilmstripDraw& fs);
+    void ResetDeviceResources();
+    float dpi_ = 1.0f;
 
     HWND hwnd_ = nullptr;
     UINT width_ = 0;
@@ -66,7 +78,15 @@ private:
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> placeholderBrush_;
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> borderBrush_;
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> currentBorderBrush_;
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> buttonBrush_;
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> buttonHoverBrush_;
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> shadowBrush_;
+    Microsoft::WRL::ComPtr<ID2D1LinearGradientBrush> barShadeBrush_;
     Microsoft::WRL::ComPtr<IDWriteFactory> dwriteFactory_;
     Microsoft::WRL::ComPtr<IDWriteTextFormat> textFormat_;
     Microsoft::WRL::ComPtr<IDWriteTextFormat> infoFormat_;
+    Microsoft::WRL::ComPtr<IDWriteTextFormat> iconFormat_;   // Segoe MDL2 Assets
+    Microsoft::WRL::ComPtr<IDWriteTextFormat> buttonFormat_; // button text labels ("1:1")
+    Microsoft::WRL::ComPtr<IDWriteTextFormat> symbolFormat_; // single-symbol buttons (rotate)
+    float textDpi_ = 0.0f;
 };

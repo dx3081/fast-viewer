@@ -226,6 +226,10 @@ LRESULT App::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
     case WM_LBUTTONDOWN: {
         POINT pt{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
         if (filmstrip_.Visible()) {
+            if (const BarAction a = filmstrip_.HitButton(pt); a != BarAction::None) {
+                DoBarAction(a);
+                return 0;
+            }
             const int idx = filmstrip_.HitTest(pt);
             if (idx >= 0) {
                 GoToIndex(idx);
@@ -249,7 +253,11 @@ LRESULT App::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
     }
     case WM_LBUTTONDBLCLK: {
         POINT pt{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
-        if (filmstrip_.Visible() && filmstrip_.IsOverStrip(pt)) return 0;
+        if (filmstrip_.Visible() && filmstrip_.IsOverStrip(pt)) {
+            // The second click of a fast double click still counts on a button.
+            if (const BarAction a = filmstrip_.HitButton(pt); a != BarAction::None) DoBarAction(a);
+            return 0;
+        }
         break;
     }
     case WM_DESTROY:
@@ -729,6 +737,7 @@ void App::TrackFilmstripPointer(POINT pt) {
     if (panning_) return; // preserve active drag; hot zone resumes after release
     const LONG h = static_cast<LONG>(renderer_->Height());
     if (filmstrip_.Visible()) {
+        if (filmstrip_.SetHover(filmstrip_.HitButton(pt))) DrawNow();
         if (filmstrip_.IsOverStrip(pt)) {
             if (hideTimerRunning_) {
                 KillTimer(hwnd_, kFilmstripHideTimer);
@@ -754,6 +763,7 @@ void App::RevealFilmstrip() {
 
 void App::HideFilmstrip() {
     filmstrip_.Hide();
+    filmstrip_.SetHover(BarAction::None);
     ++thumbGen_; // in-flight thumbnail results become stale
     Log(L"filmstrip: hide");
     DrawNow();
@@ -829,21 +839,27 @@ void App::OnThumbDone(uint64_t gen) {
 }
 
 std::wstring App::BuildInfoText() {
-    std::wstring dims = L"?x?";
+    std::wstring dims;
     if (hasImage_ && current_) {
-        dims = std::format(L"{}x{}", current_->width, current_->height);
+        dims = (rotation_ % 2) ? std::format(L"({} x {})", current_->height, current_->width)
+                               : std::format(L"({} x {})", current_->width, current_->height);
     }
     const int idx = displayIndex_ + 1;
     const int total = (navReady_ && navResult_)
                           ? static_cast<int>(navResult_->files.size())
                           : 0;
-    return std::format(L"{}  {}  {} / {}", FileNameOf(currentPath_), dims, idx, total);
+    if (total <= 0) return std::format(L"{} {}", FileNameOf(currentPath_), dims);
+    return std::format(L"{} {}     {} / {}", FileNameOf(currentPath_), dims, idx, total);
 }
 
 void App::BuildFilmstripDraw(FilmstripDraw& out) {
     out.visible = filmstrip_.Visible();
+    out.dpi = DpiScale();
     if (!out.visible) return;
     out.stripRect = filmstrip_.StripRect();
+    for (const auto& b : filmstrip_.Buttons()) {
+        out.buttons.push_back({ b.rect, b.glyph, b.iconFont, b.action == filmstrip_.Hover() });
+    }
     out.infoText = BuildInfoText();
     const auto& cells = filmstrip_.Cells();
     out.cells.reserve(cells.size());
@@ -858,6 +874,22 @@ void App::BuildFilmstripDraw(FilmstripDraw& out) {
             if (cached) d.bitmap = cached->bitmap.Get();
         }
         out.cells.push_back(d);
+    }
+}
+
+void App::DoBarAction(BarAction a) {
+    RECT rc{};
+    GetClientRect(hwnd_, &rc);
+    const POINT center{ (rc.left + rc.right) / 2, (rc.top + rc.bottom) / 2 };
+    switch (a) {
+    case BarAction::ZoomIn:    ZoomAt(center, +WHEEL_DELTA); break;
+    case BarAction::ZoomOut:   ZoomAt(center, -WHEEL_DELTA); break;
+    case BarAction::Toggle100: Toggle100Percent(); break;
+    case BarAction::RotateCCW: Rotate(-1); break;
+    case BarAction::RotateCW:  Rotate(+1); break;
+    case BarAction::Prev:      Navigate(-1); break;
+    case BarAction::Next:      Navigate(+1); break;
+    case BarAction::None:      break;
     }
 }
 

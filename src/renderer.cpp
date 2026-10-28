@@ -1,6 +1,8 @@
 #include "renderer.h"
 
 #include <d2d1helper.h>
+#include <algorithm>
+#include <cwchar>
 
 bool Renderer::Initialize(HWND hwnd) {
     hwnd_ = hwnd;
@@ -42,13 +44,7 @@ void Renderer::EnsureTarget() {
         // redraws immediately afterwards.
         const HRESULT hr = target_->Resize(D2D1::SizeU(width_, height_));
         if (hr == D2DERR_RECREATE_TARGET) {
-            target_.Reset();
-            dc_.Reset();
-            textBrush_.Reset();
-            stripBgBrush_.Reset();
-            placeholderBrush_.Reset();
-            borderBrush_.Reset();
-            currentBorderBrush_.Reset();
+            ResetDeviceResources();
             EnsureTarget();
         }
         return;
@@ -70,11 +66,24 @@ void Renderer::EnsureTarget() {
         &target_);
     if (SUCCEEDED(hr)) {
         target_.As(&dc_); // Windows 8+: always available on Windows 10
-        target_->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::LightGray), &textBrush_);
+        target_->CreateSolidColorBrush(D2D1::ColorF(0.94f, 0.94f, 0.95f, 1.0f), &textBrush_);
         target_->CreateSolidColorBrush(D2D1::ColorF(0.11f, 0.11f, 0.13f, 0.96f), &stripBgBrush_);
-        target_->CreateSolidColorBrush(D2D1::ColorF(0.20f, 0.20f, 0.23f, 1.0f), &placeholderBrush_);
-        target_->CreateSolidColorBrush(D2D1::ColorF(0.42f, 0.42f, 0.46f, 1.0f), &borderBrush_);
-        target_->CreateSolidColorBrush(D2D1::ColorF(0.93f, 0.93f, 0.95f, 1.0f), &currentBorderBrush_);
+        target_->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.10f), &placeholderBrush_);
+        target_->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.28f), &borderBrush_);
+        target_->CreateSolidColorBrush(D2D1::ColorF(0.96f, 0.96f, 0.97f, 1.0f), &currentBorderBrush_);
+        target_->CreateSolidColorBrush(D2D1::ColorF(0.10f, 0.10f, 0.12f, 0.72f), &buttonBrush_);
+        target_->CreateSolidColorBrush(D2D1::ColorF(0.30f, 0.30f, 0.34f, 0.90f), &buttonHoverBrush_);
+        target_->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.85f), &shadowBrush_);
+        const D2D1_GRADIENT_STOP stops[] = {
+            { 0.0f, D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f) },
+            { 0.45f, D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.45f) },
+            { 1.0f, D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.78f) } };
+        Microsoft::WRL::ComPtr<ID2D1GradientStopCollection> coll;
+        if (SUCCEEDED(target_->CreateGradientStopCollection(stops, 3, &coll))) {
+            target_->CreateLinearGradientBrush(
+                D2D1::LinearGradientBrushProperties(D2D1::Point2F(0, 0), D2D1::Point2F(0, 1)),
+                coll.Get(), &barShadeBrush_);
+        }
     }
 }
 
@@ -141,7 +150,7 @@ void Renderer::Render(ID2D1Bitmap* image, const ViewTransform& view,
     }
 
     if (hasError) {
-        EnsureText();
+        EnsureText(filmstrip.dpi);
         const D2D1_RECT_F rc = D2D1::RectF(24.0f, 24.0f,
                                            static_cast<FLOAT>(width_) - 24.0f,
                                            static_cast<FLOAT>(height_) - 24.0f);
@@ -154,25 +163,21 @@ void Renderer::Render(ID2D1Bitmap* image, const ViewTransform& view,
     }
 
     if (!toast.empty()) {
-        EnsureText();
+        const float d = filmstrip.dpi;
+        EnsureText(d);
         // Small rounded label in the upper middle of the window.
-        const float bw = 220.0f, bh = 40.0f;
+        const float bw = 200.0f * d, bh = 40.0f * d;
         const float x = (static_cast<float>(width_) - bw) / 2.0f;
-        const D2D1_ROUNDED_RECT box{ D2D1::RectF(x, 48.0f, x + bw, 48.0f + bh), 8.0f, 8.0f };
-        target_->FillRoundedRectangle(box, stripBgBrush_.Get());
+        const D2D1_ROUNDED_RECT box{ D2D1::RectF(x, 48.0f * d, x + bw, 48.0f * d + bh), 10.0f * d,
+                                     10.0f * d };
+        target_->FillRoundedRectangle(box, buttonBrush_.Get());
         target_->DrawTextW(toast.c_str(), static_cast<UINT32>(toast.size()), textFormat_.Get(),
                            box.rect, textBrush_.Get());
     }
 
     const HRESULT hr = target_->EndDraw();
     if (hr == D2DERR_RECREATE_TARGET) {
-        target_.Reset();
-        dc_.Reset();
-        textBrush_.Reset();
-        stripBgBrush_.Reset();
-        placeholderBrush_.Reset();
-        borderBrush_.Reset();
-        currentBorderBrush_.Reset();
+        ResetDeviceResources();
         EnsureTarget();
     }
 }
@@ -191,62 +196,114 @@ D2D1_RECT_F FitRect(const D2D1_RECT_F& cell, UINT iw, UINT ih) {
 } // namespace
 
 void Renderer::DrawFilmstrip(const FilmstripDraw& fs) {
-    if (!stripBgBrush_ || !placeholderBrush_ || !currentBorderBrush_) {
+    if (!placeholderBrush_ || !currentBorderBrush_ || !barShadeBrush_) {
         return;
     }
-    // Flat dark background + subtle top separator: the strip reads as one
-    // continuous surface, not a row of boxes (RC polish).
-    target_->FillRectangle(fs.stripRect, stripBgBrush_.Get());
-    target_->DrawLine(D2D1::Point2F(fs.stripRect.left, fs.stripRect.top),
-                      D2D1::Point2F(fs.stripRect.right, fs.stripRect.top),
-                      borderBrush_.Get(), 1.0f);
+    const float d = fs.dpi;
+    EnsureText(d);
+    // Picasa-like: no solid bar. A soft shade rises from the bottom edge so the
+    // controls stay readable while the photo shows through.
+    const float shadeTop = fs.stripRect.top - 34.0f * d;
+    barShadeBrush_->SetStartPoint(D2D1::Point2F(0.0f, shadeTop));
+    barShadeBrush_->SetEndPoint(D2D1::Point2F(0.0f, fs.stripRect.bottom));
+    target_->FillRectangle(D2D1::RectF(fs.stripRect.left, shadeTop, fs.stripRect.right,
+                                       fs.stripRect.bottom),
+                           barShadeBrush_.Get());
 
     for (const auto& cell : fs.cells) {
+        // The current image's thumbnail is a little larger, with a white frame.
+        const float grow = cell.isCurrent ? 5.0f * d : 0.0f;
+        const D2D1_RECT_F r = D2D1::RectF(cell.rect.left - grow, cell.rect.top - grow,
+                                          cell.rect.right + grow, cell.rect.bottom + grow);
+        D2D1_RECT_F pic = r;
         if (cell.bitmap) {
             const D2D1_SIZE_F size = cell.bitmap->GetSize();
-            target_->DrawBitmap(cell.bitmap, FitRect(cell.rect,
-                                                     static_cast<UINT>(size.width),
-                                                     static_cast<UINT>(size.height)),
-                                1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+            pic = FitRect(r, static_cast<UINT>(size.width), static_cast<UINT>(size.height));
+            target_->DrawBitmap(cell.bitmap, pic, cell.isCurrent ? 1.0f : 0.85f,
+                                D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
         } else {
-            // Neutral placeholder while the thumbnail loads (or for failures).
-            target_->FillRectangle(cell.rect, placeholderBrush_.Get());
+            target_->FillRoundedRectangle(D2D1::RoundedRect(r, 3.0f * d, 3.0f * d),
+                                          placeholderBrush_.Get());
         }
-        // Only the current image gets a lightweight selection border.
         if (cell.isCurrent) {
-            target_->DrawRectangle(cell.rect, currentBorderBrush_.Get(), 1.5f);
+            target_->DrawRectangle(pic, currentBorderBrush_.Get(), 2.0f * d);
         }
     }
 
-    if (!fs.infoText.empty()) {
-        EnsureText();
-        const D2D1_RECT_F rc = D2D1::RectF(fs.stripRect.left + 8.0f,
-                                           fs.stripRect.top - 18.0f,
-                                           fs.stripRect.right - 8.0f,
-                                           fs.stripRect.top - 2.0f);
+    for (const auto& b : fs.buttons) {
+        const float rad = (b.rect.bottom - b.rect.top) / 2.0f;
+        const D2D1_ROUNDED_RECT rr = D2D1::RoundedRect(b.rect, std::min(rad, 8.0f * d),
+                                                       std::min(rad, 8.0f * d));
+        target_->FillRoundedRectangle(rr, b.hovered ? buttonHoverBrush_.Get() : buttonBrush_.Get());
+        target_->DrawRoundedRectangle(rr, borderBrush_.Get(), 1.0f);
+        IDWriteTextFormat* f = b.iconFont ? iconFormat_.Get()
+                             : (wcslen(b.glyph) == 1) ? symbolFormat_.Get()
+                                                      : buttonFormat_.Get();
+        if (f) {
+            target_->DrawTextW(b.glyph, static_cast<UINT32>(wcslen(b.glyph)), f, b.rect,
+                               textBrush_.Get());
+        }
+    }
+
+    if (!fs.infoText.empty() && infoFormat_) {
+        // Caption centered above the thumbnails, with a 1 px shadow so it reads
+        // on bright photos too.
+        const D2D1_RECT_F rc = D2D1::RectF(fs.stripRect.left + 8.0f * d,
+                                           fs.stripRect.top - 26.0f * d,
+                                           fs.stripRect.right - 8.0f * d,
+                                           fs.stripRect.top - 4.0f * d);
         if (rc.top >= 0.0f) {
-            target_->DrawTextW(fs.infoText.c_str(),
-                               static_cast<UINT32>(fs.infoText.size()),
-                               infoFormat_.Get(), rc, textBrush_.Get());
+            const UINT32 n = static_cast<UINT32>(fs.infoText.size());
+            const D2D1_RECT_F sh = D2D1::RectF(rc.left + d, rc.top + d, rc.right + d, rc.bottom + d);
+            target_->DrawTextW(fs.infoText.c_str(), n, infoFormat_.Get(), sh, shadowBrush_.Get());
+            target_->DrawTextW(fs.infoText.c_str(), n, infoFormat_.Get(), rc, textBrush_.Get());
         }
     }
 }
 
-void Renderer::EnsureText() {
-    if (textFormat_ || !dwriteFactory_) return;
-    dwriteFactory_->CreateTextFormat(
-        L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
-        DWRITE_FONT_STRETCH_NORMAL, 14.0f, L"", &textFormat_);
-    if (textFormat_) {
-        textFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-        textFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-    }
-    // Small info line for the filmstrip (kept secondary to the thumbnails).
-    dwriteFactory_->CreateTextFormat(
-        L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
-        DWRITE_FONT_STRETCH_NORMAL, 12.0f, L"", &infoFormat_);
-    if (infoFormat_) {
-        infoFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-        infoFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
-    }
+void Renderer::ResetDeviceResources() {
+    target_.Reset();
+    dc_.Reset();
+    textBrush_.Reset();
+    stripBgBrush_.Reset();
+    placeholderBrush_.Reset();
+    borderBrush_.Reset();
+    currentBorderBrush_.Reset();
+    buttonBrush_.Reset();
+    buttonHoverBrush_.Reset();
+    shadowBrush_.Reset();
+    barShadeBrush_.Reset();
+}
+
+void Renderer::EnsureText(float dpi) {
+    if (!dwriteFactory_) return;
+    if (textFormat_ && textDpi_ == dpi) return;
+    textDpi_ = dpi;
+    textFormat_.Reset();
+    infoFormat_.Reset();
+    iconFormat_.Reset();
+    buttonFormat_.Reset();
+    symbolFormat_.Reset();
+    auto make = [&](const wchar_t* family, DWRITE_FONT_WEIGHT weight, float size,
+                    DWRITE_TEXT_ALIGNMENT align, DWRITE_PARAGRAPH_ALIGNMENT para,
+                    Microsoft::WRL::ComPtr<IDWriteTextFormat>& out) {
+        dwriteFactory_->CreateTextFormat(family, nullptr, weight, DWRITE_FONT_STYLE_NORMAL,
+                                         DWRITE_FONT_STRETCH_NORMAL, size * dpi, L"", &out);
+        if (out) {
+            out->SetTextAlignment(align);
+            out->SetParagraphAlignment(para);
+            out->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+        }
+    };
+    make(L"Segoe UI", DWRITE_FONT_WEIGHT_NORMAL, 15.0f, DWRITE_TEXT_ALIGNMENT_CENTER,
+         DWRITE_PARAGRAPH_ALIGNMENT_CENTER, textFormat_);
+    if (textFormat_) textFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP); // error text wraps
+    make(L"Segoe UI", DWRITE_FONT_WEIGHT_SEMI_BOLD, 13.0f, DWRITE_TEXT_ALIGNMENT_CENTER,
+         DWRITE_PARAGRAPH_ALIGNMENT_CENTER, infoFormat_);
+    make(L"Segoe MDL2 Assets", DWRITE_FONT_WEIGHT_NORMAL, 13.0f, DWRITE_TEXT_ALIGNMENT_CENTER,
+         DWRITE_PARAGRAPH_ALIGNMENT_CENTER, iconFormat_);
+    make(L"Segoe UI", DWRITE_FONT_WEIGHT_SEMI_BOLD, 13.0f, DWRITE_TEXT_ALIGNMENT_CENTER,
+         DWRITE_PARAGRAPH_ALIGNMENT_CENTER, buttonFormat_);
+    make(L"Segoe UI Symbol", DWRITE_FONT_WEIGHT_BOLD, 19.0f, DWRITE_TEXT_ALIGNMENT_CENTER,
+         DWRITE_PARAGRAPH_ALIGNMENT_CENTER, symbolFormat_);
 }

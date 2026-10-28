@@ -2,6 +2,7 @@
 #include <windows.h>
 #include <d2d1.h>
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -49,11 +50,17 @@ private:
     void OnPreloadDone(uint64_t id);
     void StartNavigation(const std::wstring& path, int target);
     void DisplayImage(const std::shared_ptr<DecodedImage>& img, int index,
-                      bool navLog, uint64_t id);
+                      bool navLog, uint64_t id, bool interim = false);
     void RequestUserDecode(const std::wstring& path, int index, bool navLog);
     void SchedulePreload();
     bool IsNearby(const std::wstring& path) const;
     void ShowFailure(const std::wstring& path, HRESULT hr, uint64_t decodeMicros);
+    std::shared_ptr<DecodedImage> MakeImage(const DecodeResult& res, double* uploadMs);
+    void UpdateDecodeBox();
+    void RequestDetailIfNeeded();
+    void OnDetailDone(const std::shared_ptr<DecodeResult>& res);
+    bool DecodeFailedBefore(const std::wstring& path) const;
+    void RememberDecodeFailure(const std::wstring& path);
 
     // filmstrip
     void TrackFilmstripPointer(POINT pt);
@@ -96,7 +103,12 @@ private:
     std::vector<std::wstring> thumbFailed_; // bounded set: no infinite retry of broken files
 
     // displayed state
-    std::shared_ptr<DecodedImage> current_;
+    std::shared_ptr<DecodedImage> current_; // screen-size copy (what the cache holds)
+    std::shared_ptr<DecodedImage> detail_;  // full-resolution copy of current_, on zoom only
+    uint64_t detailRequestId_ = 0;          // in-flight full-resolution decode (0 = none)
+    UINT boxW_ = 0;                         // screen-size decode box = monitor size, px
+    UINT boxH_ = 0;
+    std::vector<std::wstring> decodeFailed_; // bounded: never re-preload a broken file
     std::wstring currentPath_;
     bool hasImage_ = false;
     bool errorState_ = false;
@@ -122,6 +134,8 @@ private:
     uint64_t nextRequestId_ = 0;       // one globally-unique id source (user + preload)
     uint64_t latestUserRequestId_ = 0; // for stale-result detection
     uint64_t latestPreloadId_ = 0;     // for stale-preload detection
+    uint64_t shownRequestId_ = 0;      // newest request whose image is on screen
+    std::map<uint64_t, int> requestIndex_; // in-flight user decode id -> image index
     std::wstring preloadPathPending_;
     int lastNavDirection_ = 0;
     bool navLogPending_ = false;

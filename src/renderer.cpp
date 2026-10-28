@@ -43,6 +43,7 @@ void Renderer::EnsureTarget() {
         const HRESULT hr = target_->Resize(D2D1::SizeU(width_, height_));
         if (hr == D2DERR_RECREATE_TARGET) {
             target_.Reset();
+            dc_.Reset();
             textBrush_.Reset();
             stripBgBrush_.Reset();
             placeholderBrush_.Reset();
@@ -60,10 +61,15 @@ void Renderer::EnsureTarget() {
         D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE),
         96.0f, 96.0f);
 
+    // PRESENT_OPTIONS_IMMEDIATELY: do not block the UI thread waiting for the
+    // display refresh. Measured on the dev machine: the default (vsync-wait)
+    // present took 30-45 ms per frame, immediate takes < 1 ms. The window is
+    // composed by DWM, so this does not cause tearing.
     HRESULT hr = factory_->CreateHwndRenderTarget(
-        props, D2D1::HwndRenderTargetProperties(hwnd_, D2D1::SizeU(width_, height_)),
+        props, D2D1::HwndRenderTargetProperties(hwnd_, D2D1::SizeU(width_, height_), D2D1_PRESENT_OPTIONS_IMMEDIATELY),
         &target_);
     if (SUCCEEDED(hr)) {
+        target_.As(&dc_); // Windows 8+: always available on Windows 10
         target_->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::LightGray), &textBrush_);
         target_->CreateSolidColorBrush(D2D1::ColorF(0.11f, 0.11f, 0.13f, 0.96f), &stripBgBrush_);
         target_->CreateSolidColorBrush(D2D1::ColorF(0.20f, 0.20f, 0.23f, 1.0f), &placeholderBrush_);
@@ -109,8 +115,20 @@ void Renderer::Render(ID2D1Bitmap* image, const ViewTransform& view,
             D2D1::Matrix3x2F::Scale(view.scale, view.scale) *
             D2D1::Matrix3x2F::Translation(view.offsetX, view.offsetY);
         target_->SetTransform(m);
-        target_->DrawBitmap(image, D2D1::RectF(0, 0, size.width, size.height), 1.0f,
-                            D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+        const float w = view.imageW > 0.0f ? view.imageW : size.width;
+        const float h = view.imageH > 0.0f ? view.imageH : size.height;
+        const D2D1_RECT_F dst = D2D1::RectF(0, 0, w, h);
+        // Bilinear filtering is fine down to about half size; below that it
+        // aliases (jaggies, shimmer), so strong reductions of a full-resolution
+        // bitmap use high-quality cubic. Screen-size copies are drawn at about
+        // 1:1 and take the cheap path.
+        const bool strongShrink = view.scale * w < size.width * 0.5f;
+        if (dc_ && strongShrink) {
+            dc_->DrawBitmap(image, &dst, 1.0f, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC,
+                            nullptr, nullptr);
+        } else {
+            target_->DrawBitmap(image, dst, 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+        }
         target_->SetTransform(D2D1::Matrix3x2F::Identity());
     }
 
@@ -130,6 +148,7 @@ void Renderer::Render(ID2D1Bitmap* image, const ViewTransform& view,
     const HRESULT hr = target_->EndDraw();
     if (hr == D2DERR_RECREATE_TARGET) {
         target_.Reset();
+        dc_.Reset();
         textBrush_.Reset();
         stripBgBrush_.Reset();
         placeholderBrush_.Reset();

@@ -73,6 +73,7 @@ bool App::Initialize(HINSTANCE inst, const std::wstring& imagePath) {
 
     renderer_ = std::make_unique<Renderer>();
     if (!renderer_->Initialize(hwnd_)) return false;
+    UpdateDecodeBox();
 
     decoder_ = std::make_unique<ImageDecoder>();
     decoder_->Start(hwnd_);
@@ -133,6 +134,7 @@ LRESULT App::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
             if (!suppressResizeRender_) {
                 LogView();
                 DrawNow();
+                RequestDetailIfNeeded();
             }
         }
         if (!immersive_) window_.UpdateNormalRect();
@@ -155,6 +157,7 @@ LRESULT App::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
         } else {
             window_.ApplyDpiChanged(*suggested);
         }
+        UpdateDecodeBox();
         return 0;
     }
     case WM_PAINT: {
@@ -293,6 +296,8 @@ void App::ComputeTransform(ViewTransform& view) const {
         const float ih = static_cast<float>(current_->height);
         view.offsetX = (vw - iw * scale_) / 2.0f + panX_;
         view.offsetY = (vh - ih * scale_) / 2.0f + panY_;
+        view.imageW = iw;
+        view.imageH = ih;
     } else {
         view.offsetX = 0.0f;
         view.offsetY = 0.0f;
@@ -338,7 +343,8 @@ void App::DrawNow() {
     ComputeTransform(view);
     FilmstripDraw fs;
     BuildFilmstripDraw(fs);
-    renderer_->Render(current_ ? current_->bitmap.Get() : nullptr, view,
+    const auto& shown = detail_ ? detail_ : current_;
+    renderer_->Render(shown ? shown->bitmap.Get() : nullptr, view,
                       errorState_, errorText_, fs);
     if (fs.visible) {
         if (fs.infoText != lastInfoText_) {
@@ -408,7 +414,7 @@ void App::StartNavigation(const std::wstring& path, int target) {
         Log(std::format(L"cache: hit {}", path));
         navLogPending_ = true;
         requestT0Micros_ = NowMicros();
-        DisplayImage(cached, target, true, 0);
+        DisplayImage(cached, target, true, ++nextRequestId_);
     } else {
         Log(std::format(L"cache: miss {}", path));
         RequestUserDecode(path, target, true);
@@ -419,9 +425,11 @@ void App::RequestUserDecode(const std::wstring& path, int index, bool navLog) {
     targetIndex_ = index;
     const uint64_t id = ++nextRequestId_;
     latestUserRequestId_ = id;
+    detailRequestId_ = 0; // a navigation supersedes any pending zoom detail
     requestT0Micros_ = NowMicros();
     navLogPending_ = navLog;
-    decoder_->RequestDecode(id, path);
+    decoder_->RequestDecode(id, path, boxW_, boxH_);
+    requestIndex_[id] = index;
     Log(std::format(L"decode: request id={} idx={}", id, index));
 }
 
@@ -460,7 +468,27 @@ void App::OnDecodeDone(uint64_t id) {
     auto res = decoder_->TakeResult(id);
     if (!res) return;
 
+    if (id != 0 && id == detailRequestId_) {
+        OnDetailDone(res);
+        return;
+    }
+    int resultIdx = -1;
+    if (auto it = requestIndex_.find(id); it != requestIndex_.end()) {
+        resultIdx = it->second;
+        requestIndex_.erase(requestIndex_.begin(), std::next(it)); // drop it and older ids
+    }
     if (id != latestUserRequestId_) {
+        // Superseded by a newer request (the user kept pressing). Still show it
+        // while the newest one decodes, so holding an arrow key scrolls through
+        // the folder instead of freezing until the key is released.
+        if (!res->failed && id > shownRequestId_ && resultIdx >= 0) {
+            double upMs = 0.0;
+            if (auto img = MakeImage(*res, &upMs)) {
+                Log(std::format(L"decode: interim id={} idx={} shown", id, resultIdx));
+                DisplayImage(img, resultIdx, false, id, true);
+                return;
+            }
+        }
         Log(std::format(L"decode: stale id={} ignored", id));
         return;
     }
@@ -480,29 +508,22 @@ void App::OnDecodeDone(uint64_t id) {
         return;
     }
 
-    auto& px = res->pixels;
-    auto img = std::make_shared<DecodedImage>();
-    img->path = res->path;
-    img->width = px->width;
-    img->height = px->height;
-    img->estimateBytes = px->estimateBytes;
-    const long long tUp = NowMicros();
-    img->bitmap = renderer_->CreateBitmapFromPixels(px->width, px->height,
-                                                    px->pixels.data(), px->stride);
-    const double uploadMs = (NowMicros() - tUp) / 1000.0;
-    if (!img->bitmap) {
+    double uploadMs = 0.0;
+    auto img = MakeImage(*res, &uploadMs);
+    if (!img) {
         ShowFailure(res->path, E_FAIL, res->decodeMicros);
         return;
     }
-
-    Log(std::format(L"decode_ms={:.1f} {}x{} orient={} {} upload_ms={:.1f}",
-                    res->decodeMicros / 1000.0, px->width, px->height, px->orientation,
-                    res->path, uploadMs));
+    const auto& px = res->pixels;
+    Log(std::format(L"decode_ms={:.1f} {}x{} (full {}x{}) orient={} {} upload_ms={:.1f}",
+                    res->decodeMicros / 1000.0, px->width, px->height, px->fullWidth,
+                    px->fullHeight, px->orientation, res->path, uploadMs));
     DisplayImage(img, targetIdx, navLogPending_, id);
 }
 
 void App::DisplayImage(const std::shared_ptr<DecodedImage>& img, int index,
-                       bool navLog, uint64_t id) {
+                       bool navLog, uint64_t id, bool interim) {
+    if (id > shownRequestId_) shownRequestId_ = id;
     cache_->UnpinAll();
     cache_->Insert(img, true); // current image pinned
     const uint64_t evicted = cache_->EvictOld();
@@ -512,6 +533,8 @@ void App::DisplayImage(const std::shared_ptr<DecodedImage>& img, int index,
     }
 
     current_ = img;
+    detail_.reset();
+    detailRequestId_ = 0;
     currentPath_ = img->path;
     hasImage_ = true;
     errorState_ = false;
@@ -519,7 +542,7 @@ void App::DisplayImage(const std::shared_ptr<DecodedImage>& img, int index,
 
     if (index >= 0) displayIndex_ = index;
     if (navResult_ && displayIndex_ < 0) displayIndex_ = navResult_->index;
-    targetIndex_ = -1;
+    if (!interim) targetIndex_ = -1; // an interim image keeps the newest request in flight
 
     if (!firstRenderLogged_) {
         firstRenderLogged_ = true;
@@ -549,31 +572,25 @@ void App::OnPreloadDone(uint64_t id) {
         return;
     }
     preloadPathPending_.clear();
-    if (res->budgetExceeded) {
-        Log(L"preload: skipped budget (estimate exceeds usable budget)");
-        return;
-    }
-    if (res->failed) {
-        Log(std::format(L"preload: failed id={} {}", id, res->path));
+    if (res->budgetExceeded || res->failed) {
+        RememberDecodeFailure(res->path);
+        Log(std::format(L"preload: {} id={} {}",
+                        res->budgetExceeded ? L"skipped budget" : L"failed", id, res->path));
+        SchedulePreload();
         return;
     }
     if (!IsNearby(res->path)) {
         Log(std::format(L"preload: dropped (moved away) id={}", id));
+        SchedulePreload();
         return;
     }
 
-    auto& px = res->pixels;
-    auto img = std::make_shared<DecodedImage>();
-    img->path = res->path;
-    img->width = px->width;
-    img->height = px->height;
-    img->estimateBytes = px->estimateBytes;
-    const long long tUp = NowMicros();
-    img->bitmap = renderer_->CreateBitmapFromPixels(px->width, px->height,
-                                                    px->pixels.data(), px->stride);
-    const double uploadMs = (NowMicros() - tUp) / 1000.0;
-    if (!img->bitmap) {
+    double uploadMs = 0.0;
+    auto img = MakeImage(*res, &uploadMs);
+    if (!img) {
         Log(std::format(L"preload: bitmap create failed id={}", id));
+        RememberDecodeFailure(res->path);
+        SchedulePreload();
         return;
     }
     cache_->Insert(img, false);
@@ -585,6 +602,7 @@ void App::OnPreloadDone(uint64_t id) {
     Log(std::format(L"preload: done id={} est={:.0f}MB upload_ms={:.1f} cache={:.0f}MB evicts={} {}",
                     id, img->estimateBytes / kMiB, uploadMs, cache_->Bytes() / kMiB,
                     cache_->Evictions(), res->path));
+    SchedulePreload(); // keep going until the small neighborhood is ready
 }
 
 void App::SchedulePreload() {
@@ -597,26 +615,27 @@ void App::SchedulePreload() {
     const int count = static_cast<int>(navResult_->files.size());
     if (count == 0) return;
 
+    // Small neighborhood, most likely next image first: the direction of
+    // travel gets two images ahead, the other side one.
+    const int dir = lastNavDirection_ < 0 ? -1 : 1;
+    const int order[3] = { displayIndex_ + dir, displayIndex_ + 2 * dir, displayIndex_ - dir };
     int candidates[3];
     int nc = 0;
-    auto add = [&](int i) {
+    for (int i : order) {
         if (i >= 0 && i < count) candidates[nc++] = i;
-    };
-    add(displayIndex_ - 1);
-    add(displayIndex_ + 1);
-    if (lastNavDirection_ > 0) add(displayIndex_ + 2);
-    if (lastNavDirection_ < 0) add(displayIndex_ - 2);
+    }
 
     for (int i = 0; i < nc; ++i) {
         const int idx = candidates[i];
         const std::wstring& path = navResult_->files[idx];
         if (cache_->Contains(path)) continue;
-        if (!preloadPathPending_.empty() && preloadPathPending_ == path) continue;
+        if (!preloadPathPending_.empty() && preloadPathPending_ == path) return; // in flight
+        if (DecodeFailedBefore(path)) continue;
         const uint64_t id = ++nextRequestId_;
         latestPreloadId_ = id;
         preloadPathPending_ = path;
         decoder_->RequestPreload(id, path, cache_->Bytes(),
-                                 current_ ? current_->estimateBytes : 0);
+                                 current_ ? current_->estimateBytes : 0, boxW_, boxH_);
         Log(std::format(L"preload: request id={} idx={} cache={:.0f}MB", id, idx,
                         cache_->Bytes() / kMiB));
         return; // one preload at a time
@@ -639,6 +658,8 @@ void App::ShowFailure(const std::wstring& path, HRESULT hr, uint64_t decodeMicro
     errorText_ = std::format(L"Cannot display this image.\n{}", path);
     currentPath_ = path;
     current_.reset();
+    detail_.reset();
+    detailRequestId_ = 0;
     Log(std::format(L"error: {} hr=0x{:08X} decode_ms={:.1f}", path,
                     static_cast<unsigned>(hr), decodeMicros / 1000.0));
     DrawNow();
@@ -833,6 +854,7 @@ void App::Toggle100Percent() {
         ClampPan();
         LogView();
         DrawNow();
+        RequestDetailIfNeeded();
     }
 }
 
@@ -867,6 +889,7 @@ void App::ZoomAt(POINT clientPt, int wheelDelta) {
     ClampPan();
     LogView();
     DrawNow();
+    RequestDetailIfNeeded();
 }
 
 void App::PanBegin(POINT clientPt) {
@@ -890,6 +913,83 @@ void App::PanEnd() {
     if (!panning_) return;
     panning_ = false;
     ReleaseCapture();
+}
+
+// --- screen-size decode / zoom detail --------------------------------------
+
+// Builds a render-ready image from worker pixels. width/height are the
+// original (oriented) dimensions: all view math works in original-image
+// pixels, and the renderer stretches the (possibly smaller) bitmap over them.
+std::shared_ptr<DecodedImage> App::MakeImage(const DecodeResult& res, double* uploadMs) {
+    const auto& px = res.pixels;
+    if (!px) return nullptr;
+    auto img = std::make_shared<DecodedImage>();
+    img->path = res.path;
+    img->width = px->fullWidth;
+    img->height = px->fullHeight;
+    img->estimateBytes = px->estimateBytes;
+    const long long tUp = NowMicros();
+    img->bitmap = renderer_->CreateBitmapFromPixels(px->width, px->height,
+                                                    px->pixels.data(), px->stride);
+    if (uploadMs) *uploadMs = (NowMicros() - tUp) / 1000.0;
+    return img->bitmap ? img : nullptr;
+}
+
+// Decode box = work area of the monitor the window is on (= the immersive
+// window size), so the screen-size copy is drawn 1:1 in immersive mode and a
+// little smaller in normal window mode; zooming past it fetches full detail.
+void App::UpdateDecodeBox() {
+    HMONITOR mon = MonitorFromWindow(hwnd_, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO mi{};
+    mi.cbSize = sizeof(mi);
+    if (!GetMonitorInfoW(mon, &mi)) return;
+    const UINT w = static_cast<UINT>(mi.rcWork.right - mi.rcWork.left);
+    const UINT h = static_cast<UINT>(mi.rcWork.bottom - mi.rcWork.top);
+    if (w != boxW_ || h != boxH_) {
+        boxW_ = w;
+        boxH_ = h;
+        Log(std::format(L"decode box {}x{}", boxW_, boxH_));
+    }
+}
+
+// When the image is shown larger than its screen-size copy (zoom, 100%, a
+// bigger monitor), fetch the full-resolution version once for the current
+// image. Never competes with a navigation in flight.
+void App::RequestDetailIfNeeded() {
+    if (!hasImage_ || !current_ || !current_->bitmap || detail_) return;
+    if (detailRequestId_ != 0 || targetIndex_ >= 0) return;
+    const float bmpW = static_cast<float>(current_->bitmap->GetPixelSize().width);
+    if (bmpW >= static_cast<float>(current_->width)) return; // already full resolution
+    if (scale_ * static_cast<float>(current_->width) <= bmpW + 0.5f) return;
+    detailRequestId_ = ++nextRequestId_;
+    decoder_->RequestDecode(detailRequestId_, currentPath_, 0, 0);
+    Log(std::format(L"detail: request id={} {}", detailRequestId_, currentPath_));
+}
+
+void App::OnDetailDone(const std::shared_ptr<DecodeResult>& res) {
+    detailRequestId_ = 0;
+    if (res->failed || res->path != currentPath_ || !current_) {
+        Log(std::format(L"detail: unavailable hr=0x{:08X} {}", static_cast<unsigned>(res->hr),
+                        res->path));
+        return; // keep showing the screen-size copy
+    }
+    double uploadMs = 0.0;
+    auto img = MakeImage(*res, &uploadMs);
+    if (!img) return;
+    detail_ = img;
+    Log(std::format(L"detail: done decode_ms={:.1f} upload_ms={:.1f}",
+                    res->decodeMicros / 1000.0, uploadMs));
+    DrawNow();
+}
+
+bool App::DecodeFailedBefore(const std::wstring& path) const {
+    return std::find(decodeFailed_.begin(), decodeFailed_.end(), path) != decodeFailed_.end();
+}
+
+void App::RememberDecodeFailure(const std::wstring& path) {
+    if (DecodeFailedBefore(path)) return;
+    if (decodeFailed_.size() >= kMaxThumbFailed) decodeFailed_.erase(decodeFailed_.begin());
+    decodeFailed_.push_back(path);
 }
 
 // --- instrumentation -------------------------------------------------------

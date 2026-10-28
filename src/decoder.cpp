@@ -49,19 +49,21 @@ void ImageDecoder::Stop() {
     if (threadPreload_.joinable()) threadPreload_.join();
 }
 
-void ImageDecoder::RequestDecode(uint64_t id, std::wstring path) {
+void ImageDecoder::RequestDecode(uint64_t id, std::wstring path, UINT boxW, UINT boxH) {
     {
         std::lock_guard<std::mutex> lock(mtx_);
-        pendingDecode_ = DecodeJob{ id, std::move(path) };
+        pendingDecode_ = DecodeJob{ id, std::move(path), boxW, boxH };
     }
     cvDecode_.notify_one();
 }
 
 void ImageDecoder::RequestPreload(uint64_t id, std::wstring path,
-                                  uint64_t cacheBytes, uint64_t currentImageBytes) {
+                                  uint64_t cacheBytes, uint64_t currentImageBytes,
+                                  UINT boxW, UINT boxH) {
     {
         std::lock_guard<std::mutex> lock(mtx_);
-        pendingPreload_ = PreloadJob{ id, std::move(path), cacheBytes, currentImageBytes };
+        pendingPreload_ = PreloadJob{ id, std::move(path), cacheBytes, currentImageBytes,
+                                      boxW, boxH };
     }
     cvPreload_.notify_one();
 }
@@ -97,6 +99,7 @@ void ImageDecoder::DecodeWorkerMain() {
         result->path = std::move(job.path);
         const uint64_t t0 = NowMicros();
         result->pixels = DecodeToPixels(wic.Get(), result->path, kMaxDecodedBytes,
+                                        job.boxW, job.boxH,
                                         &result->hr, &result->budgetExceeded);
         result->failed = !result->pixels;
         result->decodeMicros = NowMicros() - t0;
@@ -145,6 +148,7 @@ void ImageDecoder::PreloadWorkerMain() {
 
         const uint64_t t0 = NowMicros();
         result->pixels = DecodeToPixels(wic.Get(), result->path, maxBytes,
+                                        job.boxW, job.boxH,
                                         &result->hr, &result->budgetExceeded);
         result->failed = !result->pixels;
         result->decodeMicros = NowMicros() - t0;

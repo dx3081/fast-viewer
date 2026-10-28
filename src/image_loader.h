@@ -17,6 +17,8 @@ struct DecodedPixels {
     UINT stride = 0;   // width * 4
     UINT srcWidth = 0; // pre-orientation dimensions
     UINT srcHeight = 0;
+    UINT fullWidth = 0;  // oriented dimensions of the original image; equal to
+    UINT fullHeight = 0; // width/height unless the decode was scaled down
     int orientation = 1;
     uint64_t estimateBytes = 0; // width * height * 4
 };
@@ -30,14 +32,18 @@ constexpr UINT kMaxImageDimension = 16384;
 constexpr UINT64 kMaxDecodedBytes = 512ULL * 1024 * 1024; // 512 MB per image
 
 // Decodes `path` to raw 32bpp premultiplied BGRA pixels with EXIF orientation
-// applied. `maxBytes` is the decoded-bytes ceiling for this request
-// (kMaxDecodedBytes for user requests; a smaller preload budget otherwise).
+// applied. `maxBytes` is the decoded-bytes ceiling for this request.
+// `boxW`/`boxH` (both > 0) request a screen-size decode: an image larger than
+// the box is scaled down (high-quality cubic) to fit inside it, which is far
+// faster and smaller than a full decode; fullWidth/fullHeight still report the
+// original size. Pass 0/0 for a full-resolution decode.
 // Returns nullptr on corrupt/unsupported/oversized/budget-exceeded failures;
 // never throws. `outHr` receives the failing HRESULT and `outBudgetExceeded`
 // reports a pre-allocation memory-budget rejection.
 std::shared_ptr<DecodedPixels> DecodeToPixels(IWICImagingFactory* factory,
                                               const std::wstring& path,
                                               uint64_t maxBytes,
+                                              UINT boxW, UINT boxH,
                                               HRESULT* outHr = nullptr,
                                               bool* outBudgetExceeded = nullptr);
 
@@ -46,7 +52,7 @@ std::shared_ptr<DecodedPixels> DecodeToPixels(IWICImagingFactory* factory,
 bool IsSupportedExtension(const std::wstring& path);
 
 // Decodes a small EXIF-oriented thumbnail that fits within `maxDim` x `maxDim`
-// pixels, using the WIC scaler (no full-size allocation beyond the frame the
-// codec decodes). Returns nullptr on failure; never throws.
+// pixels (reduced-size codec decode + high-quality scaler). Returns nullptr on
+// failure; never throws.
 std::shared_ptr<DecodedPixels> DecodeThumbnail(IWICImagingFactory* factory,
                                                const std::wstring& path, UINT maxDim);

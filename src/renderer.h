@@ -1,6 +1,6 @@
 #pragma once
 #include <windows.h>
-#include <d2d1.h>
+#include <d2d1_1.h>
 #include <dwrite.h>
 #include <wrl/client.h>
 #include <string>
@@ -11,6 +11,8 @@ struct ViewTransform {
     float scale = 1.0f;   // image pixels -> screen pixels
     float offsetX = 0.0f; // screen-space position of image origin
     float offsetY = 0.0f;
+    float imageW = 0.0f;  // original image size in image px; the bitmap may be a
+    float imageH = 0.0f;  // smaller screen-size copy stretched over this rect
 };
 
 // A filmstrip thumbnail cell to draw (UI thread provides the bitmap).
@@ -57,6 +59,7 @@ private:
     UINT height_ = 0;
     Microsoft::WRL::ComPtr<ID2D1Factory> factory_;
     Microsoft::WRL::ComPtr<ID2D1HwndRenderTarget> target_;
+    Microsoft::WRL::ComPtr<ID2D1DeviceContext> dc_; // same target; high-quality scaling
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> textBrush_;
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> stripBgBrush_;
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> placeholderBrush_;

@@ -44,9 +44,11 @@ public:
 
     // UI thread API. Each call replaces the pending job (latest-wins, so the
     // queue can never grow unbounded).
-    void RequestDecode(uint64_t id, std::wstring path);
+    // boxW/boxH: screen-size decode box (0/0 = full resolution).
+    void RequestDecode(uint64_t id, std::wstring path, UINT boxW, UINT boxH);
     void RequestPreload(uint64_t id, std::wstring path,
-                        uint64_t cacheBytes, uint64_t currentImageBytes);
+                        uint64_t cacheBytes, uint64_t currentImageBytes,
+                        UINT boxW, UINT boxH);
 
     // UI thread: take a completed result by id (erases the slot).
     std::shared_ptr<DecodeResult> TakeResult(uint64_t id);
@@ -59,8 +61,8 @@ private:
     std::mutex mtx_;
     std::condition_variable cvDecode_;
     std::condition_variable cvPreload_;
-    struct DecodeJob { uint64_t id; std::wstring path; };
-    struct PreloadJob { uint64_t id; std::wstring path; uint64_t cacheBytes; uint64_t currentBytes; };
+    struct DecodeJob { uint64_t id; std::wstring path; UINT boxW; UINT boxH; };
+    struct PreloadJob { uint64_t id; std::wstring path; uint64_t cacheBytes; uint64_t currentBytes; UINT boxW; UINT boxH; };
     std::optional<DecodeJob> pendingDecode_;
     std::optional<PreloadJob> pendingPreload_;
     bool stop_ = false;

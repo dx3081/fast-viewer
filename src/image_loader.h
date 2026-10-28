@@ -20,7 +20,11 @@ struct DecodedPixels {
     UINT fullWidth = 0;  // oriented dimensions of the original image; equal to
     UINT fullHeight = 0; // width/height unless the decode was scaled down
     int orientation = 1;
-    uint64_t estimateBytes = 0; // width * height * 4
+    uint64_t estimateBytes = 0; // width * height * 4 (all frames for animations)
+    // Animated GIF: frames 1..n-1 (frame 0 is `pixels`), fully composed, same
+    // size and stride as frame 0; delaysMs has one entry per frame.
+    std::vector<std::vector<BYTE>> extraFrames;
+    std::vector<UINT> delaysMs;
 };
 
 // M1 safety limits (per-image rule unchanged from M0.1):
@@ -47,9 +51,14 @@ std::shared_ptr<DecodedPixels> DecodeToPixels(IWICImagingFactory* factory,
                                               HRESULT* outHr = nullptr,
                                               bool* outBudgetExceeded = nullptr);
 
-// True if `path`'s extension is in the supported set
-// (jpg/jpeg/png/bmp/tif/tiff/webp).
+// True if `path`'s extension can be decoded on this machine. The set is asked
+// from Windows Imaging Component once (every installed decoder: JPEG, PNG, GIF,
+// BMP, TIFF, WebP, plus HEIC/AVIF/RAW when their Windows extensions are
+// installed), so new system codecs work without a code change.
 bool IsSupportedExtension(const std::wstring& path);
+
+// The supported extensions, lowercase with dot (".jpg"), for diagnostics.
+const std::vector<std::wstring>& SupportedExtensions();
 
 // Decodes a small EXIF-oriented thumbnail that fits within `maxDim` x `maxDim`
 // pixels (reduced-size codec decode + high-quality scaler). Returns nullptr on

@@ -18,6 +18,9 @@ enum class Action {
     PrevImage,   // Left
     NextImage,   // Right
     Toggle100,   // '1'
+    RotateCW,    // R (view only, the file is never changed)
+    RotateCCW,   // Shift+R
+    CopyImage,   // Ctrl+C
 };
 
 struct WheelInfo {

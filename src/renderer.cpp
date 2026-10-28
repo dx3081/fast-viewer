@@ -102,7 +102,7 @@ Microsoft::WRL::ComPtr<ID2D1Bitmap> Renderer::CreateBitmapFromPixels(
 
 void Renderer::Render(ID2D1Bitmap* image, const ViewTransform& view,
                       bool hasError, const std::wstring& errorText,
-                      const FilmstripDraw& filmstrip) {
+                      const FilmstripDraw& filmstrip, const std::wstring& toast) {
     if (!target_) return;
 
     target_->BeginDraw();
@@ -111,12 +111,20 @@ void Renderer::Render(ID2D1Bitmap* image, const ViewTransform& view,
 
     if (image) {
         const D2D1_SIZE_F size = image->GetSize();
+        const float w = view.imageW > 0.0f ? view.imageW : size.width;
+        const float h = view.imageH > 0.0f ? view.imageH : size.height;
+        // Rotate about the image center, then place the rotated box at the
+        // origin; scale and offset then work on the rotated (on-screen) box.
+        const int q = ((view.quarterTurns % 4) + 4) % 4;
+        const float ew = (q % 2) ? h : w;
+        const float eh = (q % 2) ? w : h;
         const D2D1_MATRIX_3X2_F m =
+            D2D1::Matrix3x2F::Translation(-w / 2.0f, -h / 2.0f) *
+            D2D1::Matrix3x2F::Rotation(90.0f * static_cast<float>(q)) *
+            D2D1::Matrix3x2F::Translation(ew / 2.0f, eh / 2.0f) *
             D2D1::Matrix3x2F::Scale(view.scale, view.scale) *
             D2D1::Matrix3x2F::Translation(view.offsetX, view.offsetY);
         target_->SetTransform(m);
-        const float w = view.imageW > 0.0f ? view.imageW : size.width;
-        const float h = view.imageH > 0.0f ? view.imageH : size.height;
         const D2D1_RECT_F dst = D2D1::RectF(0, 0, w, h);
         // Bilinear filtering is fine down to about half size; below that it
         // aliases (jaggies, shimmer), so strong reductions of a full-resolution
@@ -143,6 +151,17 @@ void Renderer::Render(ID2D1Bitmap* image, const ViewTransform& view,
 
     if (filmstrip.visible) {
         DrawFilmstrip(filmstrip);
+    }
+
+    if (!toast.empty()) {
+        EnsureText();
+        // Small rounded label in the upper middle of the window.
+        const float bw = 220.0f, bh = 40.0f;
+        const float x = (static_cast<float>(width_) - bw) / 2.0f;
+        const D2D1_ROUNDED_RECT box{ D2D1::RectF(x, 48.0f, x + bw, 48.0f + bh), 8.0f, 8.0f };
+        target_->FillRoundedRectangle(box, stripBgBrush_.Get());
+        target_->DrawTextW(toast.c_str(), static_cast<UINT32>(toast.size()), textFormat_.Get(),
+                           box.rect, textBrush_.Get());
     }
 
     const HRESULT hr = target_->EndDraw();

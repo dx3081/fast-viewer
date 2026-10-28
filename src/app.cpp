@@ -1,6 +1,7 @@
 #include "app.h"
 
 #include <windowsx.h>
+#include <shlobj.h>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -14,12 +15,20 @@ namespace {
 
 constexpr UINT kMsgScanDone = WM_APP + 1;
 constexpr UINT_PTR kFilmstripHideTimer = 2;
+constexpr UINT_PTR kAnimTimer = 3;
+constexpr UINT_PTR kToastTimer = 4;
 constexpr float kZoomFactorPerNotch = 1.25f;
 constexpr float kMaxZoom = 16.0f;
 constexpr float kMinZoomSafety = 0.01f;
 constexpr double kMiB = 1024.0 * 1024.0;
 constexpr uint64_t kThumbCacheBudget = 24ULL * 1024 * 1024; // 24 MB thumbnail cache
 constexpr size_t kMaxThumbFailed = 512;
+
+// UI text follows the Windows display language: Chinese or English.
+const wchar_t* Text(const wchar_t* zh, const wchar_t* en) {
+    static const bool chinese = PRIMARYLANGID(GetUserDefaultUILanguage()) == LANG_CHINESE;
+    return chinese ? zh : en;
+}
 
 bool ThumbFailedContains(const std::vector<std::wstring>& v, const std::wstring& path) {
     return std::find(v.begin(), v.end(), path) != v.end();
@@ -115,12 +124,14 @@ LRESULT App::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
                 // Invalidate any in-flight preload; do not start new ones.
                 latestPreloadId_ = ++nextRequestId_;
                 preloadPathPending_.clear();
+                StopAnimation();
                 Log(L"minimized");
             }
         } else if (wParam == SIZE_RESTORED && minimized_) {
             minimized_ = false;
             Log(L"restored");
             SchedulePreload();
+            StartAnimation();
         }
         if (renderer_) {
             renderer_->Resize(w, h);
@@ -188,6 +199,16 @@ LRESULT App::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
             HideFilmstrip();
             return 0;
         }
+        if (wParam == kAnimTimer) {
+            OnAnimationTick();
+            return 0;
+        }
+        if (wParam == kToastTimer) {
+            KillTimer(hwnd_, kToastTimer);
+            toast_.clear();
+            DrawNow();
+            return 0;
+        }
         break;
     case WM_MOUSEMOVE:
         TrackFilmstripPointer(POINT{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) });
@@ -234,6 +255,7 @@ LRESULT App::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
     case WM_DESTROY:
         DebugMark(L"wm_destroy");
         KillTimer(hwnd_, kFilmstripHideTimer);
+        StopAnimation();
         window_.SaveNormalRect();
         PostQuitMessage(0);
         return 0;
@@ -250,6 +272,9 @@ LRESULT App::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
     case input::Action::Close:      Close(); break;
     case input::Action::ToggleMode: ToggleMode(); break;
     case input::Action::Toggle100:  Toggle100Percent(); break;
+    case input::Action::RotateCW:   Rotate(+1); break;
+    case input::Action::RotateCCW:  Rotate(-1); break;
+    case input::Action::CopyImage:  CopyToClipboard(); break;
     case input::Action::ZoomIn:
     case input::Action::ZoomOut:    ZoomAt(wheel.clientPos, wheel.delta); break;
     case input::Action::PanBegin:   PanBegin(pan.clientPos); break;
@@ -270,8 +295,8 @@ void App::ComputeFit() {
     if (!hasImage_ || !current_ || !current_->bitmap) return;
     const float vw = static_cast<float>(renderer_->Width());
     const float vh = static_cast<float>(renderer_->Height());
-    const float iw = static_cast<float>(current_->width);
-    const float ih = static_cast<float>(current_->height);
+    const float iw = EffW();
+    const float ih = EffH();
     if (vw <= 0.0f || vh <= 0.0f || iw <= 0.0f || ih <= 0.0f) return;
     const float s = std::min(vw / iw, vh / ih);
     fitScale_ = std::min(s, 1.0f); // never upscale small images
@@ -292,12 +317,13 @@ void App::ComputeTransform(ViewTransform& view) const {
     if (hasImage_ && current_ && current_->bitmap) {
         const float vw = static_cast<float>(renderer_->Width());
         const float vh = static_cast<float>(renderer_->Height());
-        const float iw = static_cast<float>(current_->width);
-        const float ih = static_cast<float>(current_->height);
+        const float iw = EffW();
+        const float ih = EffH();
         view.offsetX = (vw - iw * scale_) / 2.0f + panX_;
         view.offsetY = (vh - ih * scale_) / 2.0f + panY_;
-        view.imageW = iw;
-        view.imageH = ih;
+        view.imageW = static_cast<float>(current_->width);
+        view.imageH = static_cast<float>(current_->height);
+        view.quarterTurns = rotation_;
     } else {
         view.offsetX = 0.0f;
         view.offsetY = 0.0f;
@@ -315,8 +341,8 @@ void App::ClampPan() {
     }
     const float vw = static_cast<float>(renderer_->Width());
     const float vh = static_cast<float>(renderer_->Height());
-    const float iw = static_cast<float>(current_->width);
-    const float ih = static_cast<float>(current_->height);
+    const float iw = EffW();
+    const float ih = EffH();
 
     const float excessX = iw * scale_ - vw;
     const float excessY = ih * scale_ - vh;
@@ -343,9 +369,16 @@ void App::DrawNow() {
     ComputeTransform(view);
     FilmstripDraw fs;
     BuildFilmstripDraw(fs);
-    const auto& shown = detail_ ? detail_ : current_;
-    renderer_->Render(shown ? shown->bitmap.Get() : nullptr, view,
-                      errorState_, errorText_, fs);
+    ID2D1Bitmap* shown = nullptr;
+    if (detail_) {
+        shown = detail_->bitmap.Get();
+    } else if (current_) {
+        shown = (current_->frames.size() > 1 && animFrame_ < current_->frames.size())
+                    ? current_->frames[animFrame_].Get()
+                    : current_->bitmap.Get();
+    }
+    renderer_->Render(shown, view,
+                      errorState_, errorText_, fs, toast_);
     if (fs.visible) {
         if (fs.infoText != lastInfoText_) {
             lastInfoText_ = fs.infoText;
@@ -377,10 +410,10 @@ void App::LogView() {
     Log(std::format(L"view: scale={:.4f} offset=({:.1f},{:.1f}) pan=({:.1f},{:.1f}) mode={}",
                     scale_,
                     (hasImage_ && current_
-                         ? (renderer_->Width() - static_cast<float>(current_->width) * scale_) / 2.0f + panX_
+                         ? (renderer_->Width() - EffW() * scale_) / 2.0f + panX_
                          : 0.0f),
                     (hasImage_ && current_
-                         ? (renderer_->Height() - static_cast<float>(current_->height) * scale_) / 2.0f + panY_
+                         ? (renderer_->Height() - EffH() * scale_) / 2.0f + panY_
                          : 0.0f),
                     panX_, panY_,
                     viewMode_ == ViewMode::Fit ? L"Fit"
@@ -437,6 +470,9 @@ void App::OnScanComplete() {
     navResult_ = nav_->TakeResult();
     navReady_ = true;
     if (displayIndex_ < 0) displayIndex_ = navResult_->index;
+    std::wstring exts;
+    for (const auto& e : SupportedExtensions()) exts += e + L" ";
+    Log(L"formats: " + exts);
     Log(std::format(L"scan: count={} index={} ms={:.1f}",
                     static_cast<int>(navResult_->files.size()), navResult_->index,
                     navResult_->scanMicros / 1000.0));
@@ -533,6 +569,7 @@ void App::DisplayImage(const std::shared_ptr<DecodedImage>& img, int index,
     }
 
     current_ = img;
+    rotation_ = 0;
     detail_.reset();
     detailRequestId_ = 0;
     currentPath_ = img->path;
@@ -550,6 +587,7 @@ void App::DisplayImage(const std::shared_ptr<DecodedImage>& img, int index,
     }
 
     ResetViewToFit();
+    StartAnimation();
     const long long tDraw = NowMicros();
     DrawNow(); // presentation: swap + render the new image
     const double renderMs = (NowMicros() - tDraw) / 1000.0;
@@ -655,11 +693,24 @@ bool App::IsNearby(const std::wstring& path) const {
 void App::ShowFailure(const std::wstring& path, HRESULT hr, uint64_t decodeMicros) {
     hasImage_ = false;
     errorState_ = true;
-    errorText_ = std::format(L"Cannot display this image.\n{}", path);
+    std::wstring ext;
+    if (const size_t dot = path.find_last_of(L'.'); dot != std::wstring::npos) ext = path.substr(dot);
+    for (auto& c : ext) c = static_cast<wchar_t>(towlower(c));
+    std::wstring hint;
+    if (ext == L".heic" || ext == L".heif" || ext == L".hif") {
+        hint = Text(L"\n\n这台电脑需要微软商店的“HEVC 视频扩展”才能显示 HEIC 照片。",
+                    L"\n\nHEIC photos need the \"HEVC Video Extensions\" from the Microsoft Store.");
+    } else if (ext == L".avif") {
+        hint = Text(L"\n\n这台电脑需要微软商店的“AV1 视频扩展”才能显示 AVIF 图片。",
+                    L"\n\nAVIF images need the \"AV1 Video Extension\" from the Microsoft Store.");
+    }
+    errorText_ = std::format(L"{}\n{}{}", Text(L"无法显示这张图片。", L"Cannot display this image."),
+                             path, hint);
     currentPath_ = path;
     current_.reset();
     detail_.reset();
     detailRequestId_ = 0;
+    StopAnimation();
     Log(std::format(L"error: {} hr=0x{:08X} decode_ms={:.1f}", path,
                     static_cast<unsigned>(hr), decodeMicros / 1000.0));
     DrawNow();
@@ -863,8 +914,8 @@ void App::ZoomAt(POINT clientPt, int wheelDelta) {
     const float vw = static_cast<float>(renderer_->Width());
     const float vh = static_cast<float>(renderer_->Height());
     if (vw <= 0.0f || vh <= 0.0f) return;
-    const float iw = static_cast<float>(current_->width);
-    const float ih = static_cast<float>(current_->height);
+    const float iw = EffW();
+    const float ih = EffH();
 
     const float curOffX = (vw - iw * scale_) / 2.0f + panX_;
     const float curOffY = (vh - ih * scale_) / 2.0f + panY_;
@@ -915,6 +966,160 @@ void App::PanEnd() {
     ReleaseCapture();
 }
 
+// --- rotate / copy / toast --------------------------------------------------
+
+float App::EffW() const {
+    if (!current_) return 0.0f;
+    return static_cast<float>((rotation_ % 2) ? current_->height : current_->width);
+}
+
+float App::EffH() const {
+    if (!current_) return 0.0f;
+    return static_cast<float>((rotation_ % 2) ? current_->width : current_->height);
+}
+
+void App::Rotate(int quarterTurns) {
+    if (!hasImage_ || !current_) return;
+    rotation_ = ((rotation_ + quarterTurns) % 4 + 4) % 4;
+    ResetViewToFit(); // a rotated image is re-fitted (simple and predictable)
+    DrawNow();
+    Log(std::format(L"rotate: {} deg", rotation_ * 90));
+}
+
+void App::ShowToast(const std::wstring& text) {
+    toast_ = text;
+    SetTimer(hwnd_, kToastTimer, 1200, nullptr);
+    DrawNow();
+}
+
+namespace {
+
+// 32-bit bottom-up DIB from premultiplied BGRA (un-premultiplied for apps
+// that read the alpha channel).
+HGLOBAL MakeDib(const DecodedPixels& px) {
+    const size_t rowBytes = static_cast<size_t>(px.width) * 4;
+    const size_t bytes = sizeof(BITMAPINFOHEADER) + rowBytes * px.height;
+    HGLOBAL mem = GlobalAlloc(GMEM_MOVEABLE, bytes);
+    if (!mem) return nullptr;
+    auto* p = static_cast<BYTE*>(GlobalLock(mem));
+    BITMAPINFOHEADER bih{};
+    bih.biSize = sizeof(bih);
+    bih.biWidth = static_cast<LONG>(px.width);
+    bih.biHeight = static_cast<LONG>(px.height); // positive = bottom-up
+    bih.biPlanes = 1;
+    bih.biBitCount = 32;
+    bih.biCompression = BI_RGB;
+    bih.biSizeImage = static_cast<DWORD>(rowBytes * px.height);
+    memcpy(p, &bih, sizeof(bih));
+    BYTE* dst = p + sizeof(bih);
+    for (UINT y = 0; y < px.height; ++y) {
+        const BYTE* s = px.pixels.data() + static_cast<size_t>(px.height - 1 - y) * px.stride;
+        BYTE* d = dst + rowBytes * y;
+        for (UINT x = 0; x < px.width; ++x, s += 4, d += 4) {
+            const BYTE a = s[3];
+            if (a == 255 || a == 0) {
+                d[0] = s[0]; d[1] = s[1]; d[2] = s[2];
+            } else {
+                d[0] = static_cast<BYTE>(std::min(255, s[0] * 255 / a));
+                d[1] = static_cast<BYTE>(std::min(255, s[1] * 255 / a));
+                d[2] = static_cast<BYTE>(std::min(255, s[2] * 255 / a));
+            }
+            d[3] = a;
+        }
+    }
+    GlobalUnlock(mem);
+    return mem;
+}
+
+HGLOBAL MakeHdrop(const std::wstring& path) {
+    const size_t bytes = sizeof(DROPFILES) + (path.size() + 2) * sizeof(wchar_t);
+    HGLOBAL mem = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, bytes);
+    if (!mem) return nullptr;
+    auto* df = static_cast<DROPFILES*>(GlobalLock(mem));
+    df->pFiles = sizeof(DROPFILES);
+    df->fWide = TRUE;
+    memcpy(reinterpret_cast<BYTE*>(df) + sizeof(DROPFILES), path.c_str(),
+           path.size() * sizeof(wchar_t)); // double-null terminated by ZEROINIT
+    GlobalUnlock(mem);
+    return mem;
+}
+
+} // namespace
+
+// Ctrl+C: the image (as shown: EXIF orientation + view rotation, full
+// resolution) for pasting into chats/documents, plus the file itself for
+// pasting into Explorer.
+void App::CopyToClipboard() {
+    if (!hasImage_ || currentPath_.empty()) return;
+    Microsoft::WRL::ComPtr<IWICImagingFactory> wic;
+    if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
+                                IID_PPV_ARGS(&wic)))) {
+        return;
+    }
+    std::shared_ptr<DecodedPixels> px = DecodeToPixels(wic.Get(), currentPath_, kMaxDecodedBytes, 0, 0);
+    if (px && rotation_ != 0) {
+        Microsoft::WRL::ComPtr<IWICBitmap> mem;
+        Microsoft::WRL::ComPtr<IWICBitmapFlipRotator> rot;
+        const WICBitmapTransformOptions opt = rotation_ == 1 ? WICBitmapTransformRotate90
+                                            : rotation_ == 2 ? WICBitmapTransformRotate180
+                                                             : WICBitmapTransformRotate270;
+        if (SUCCEEDED(wic->CreateBitmapFromMemory(px->width, px->height, GUID_WICPixelFormat32bppPBGRA,
+                                                  px->stride, static_cast<UINT>(px->pixels.size()),
+                                                  px->pixels.data(), &mem)) &&
+            SUCCEEDED(wic->CreateBitmapFlipRotator(&rot)) &&
+            SUCCEEDED(rot->Initialize(mem.Get(), opt))) {
+            auto out = std::make_shared<DecodedPixels>();
+            rot->GetSize(&out->width, &out->height);
+            out->stride = out->width * 4;
+            out->pixels.resize(static_cast<size_t>(out->stride) * out->height);
+            if (SUCCEEDED(rot->CopyPixels(nullptr, out->stride, static_cast<UINT>(out->pixels.size()),
+                                          out->pixels.data()))) {
+                px = out;
+            }
+        }
+    }
+    if (!OpenClipboard(hwnd_)) return;
+    EmptyClipboard();
+    bool ok = false;
+    if (px) {
+        if (HGLOBAL dib = MakeDib(*px)) {
+            if (SetClipboardData(CF_DIB, dib)) ok = true; else GlobalFree(dib);
+        }
+    }
+    if (HGLOBAL drop = MakeHdrop(currentPath_)) {
+        if (SetClipboardData(CF_HDROP, drop)) ok = true; else GlobalFree(drop);
+    }
+    CloseClipboard();
+    Log(std::format(L"copy: {} {}", ok ? L"ok" : L"failed", px ? L"image+file" : L"file"));
+    if (ok) ShowToast(Text(L"已复制", L"Copied"));
+}
+
+// --- animated GIF ------------------------------------------------------------
+
+void App::StartAnimation() {
+    StopAnimation();
+    animFrame_ = 0;
+    if (!current_ || current_->frames.size() < 2 || minimized_) return;
+    SetTimer(hwnd_, kAnimTimer, current_->delaysMs[0], nullptr);
+    animTimerRunning_ = true;
+    Log(std::format(L"anim: frames={} first_delay_ms={}", current_->frames.size(), current_->delaysMs[0]));
+}
+
+void App::StopAnimation() {
+    if (animTimerRunning_) KillTimer(hwnd_, kAnimTimer);
+    animTimerRunning_ = false;
+}
+
+void App::OnAnimationTick() {
+    if (!current_ || current_->frames.size() < 2 || minimized_) {
+        StopAnimation();
+        return;
+    }
+    animFrame_ = (animFrame_ + 1) % current_->frames.size();
+    SetTimer(hwnd_, kAnimTimer, current_->delaysMs[animFrame_], nullptr);
+    DrawNow();
+}
+
 // --- screen-size decode / zoom detail --------------------------------------
 
 // Builds a render-ready image from worker pixels. width/height are the
@@ -931,6 +1136,19 @@ std::shared_ptr<DecodedImage> App::MakeImage(const DecodeResult& res, double* up
     const long long tUp = NowMicros();
     img->bitmap = renderer_->CreateBitmapFromPixels(px->width, px->height,
                                                     px->pixels.data(), px->stride);
+    if (img->bitmap && !px->extraFrames.empty()) {
+        img->frames.push_back(img->bitmap);
+        for (const auto& f : px->extraFrames) {
+            auto b = renderer_->CreateBitmapFromPixels(px->width, px->height, f.data(), px->stride);
+            if (!b) break;
+            img->frames.push_back(b);
+        }
+        img->delaysMs = px->delaysMs;
+        if (img->frames.size() != img->delaysMs.size()) {
+            img->frames.clear(); // incomplete upload: show it as a still image
+            img->delaysMs.clear();
+        }
+    }
     if (uploadMs) *uploadMs = (NowMicros() - tUp) / 1000.0;
     return img->bitmap ? img : nullptr;
 }
@@ -957,6 +1175,7 @@ void App::UpdateDecodeBox() {
 // image. Never competes with a navigation in flight.
 void App::RequestDetailIfNeeded() {
     if (!hasImage_ || !current_ || !current_->bitmap || detail_) return;
+    if (current_->frames.size() > 1) return;
     if (detailRequestId_ != 0 || targetIndex_ >= 0) return;
     const float bmpW = static_cast<float>(current_->bitmap->GetPixelSize().width);
     if (bmpW >= static_cast<float>(current_->width)) return; // already full resolution

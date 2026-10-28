@@ -14,6 +14,8 @@ Action TranslateMessage(UINT msg, WPARAM wParam, LPARAM lParam, HWND hwnd,
         case VK_LEFT:   return Action::PrevImage;
         case VK_RIGHT:  return Action::NextImage;
         case '1':       return Action::Toggle100;
+        case 'R':       return (GetKeyState(VK_SHIFT) < 0) ? Action::RotateCCW : Action::RotateCW;
+        case 'C':       return (GetKeyState(VK_CONTROL) < 0) ? Action::CopyImage : Action::None;
         default:        return Action::None;
         }
     case WM_LBUTTONDBLCLK: return Action::ToggleMode;

@@ -7,11 +7,14 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <vector>
 
 // A render-ready decoded image owned by the UI thread (Direct2D bitmap).
 struct DecodedImage {
     std::wstring path;
     Microsoft::WRL::ComPtr<ID2D1Bitmap> bitmap;
+    std::vector<Microsoft::WRL::ComPtr<ID2D1Bitmap>> frames; // animated GIF: all frames
+    std::vector<UINT> delaysMs;                              // per frame
     UINT width = 0;
     UINT height = 0;
     uint64_t estimateBytes = 0; // width * height * 4

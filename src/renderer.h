@@ -13,6 +13,7 @@ struct ViewTransform {
     float offsetY = 0.0f;
     float imageW = 0.0f;  // original image size in image px; the bitmap may be a
     float imageH = 0.0f;  // smaller screen-size copy stretched over this rect
+    int quarterTurns = 0; // view rotation, clockwise, 0..3 (offsets are for the rotated box)
 };
 
 // A filmstrip thumbnail cell to draw (UI thread provides the bitmap).
@@ -47,7 +48,7 @@ public:
 
     void Render(ID2D1Bitmap* image, const ViewTransform& view,
                 bool hasError, const std::wstring& errorText,
-                const FilmstripDraw& filmstrip);
+                const FilmstripDraw& filmstrip, const std::wstring& toast = {});
 
 private:
     void EnsureTarget();

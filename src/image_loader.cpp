@@ -3,6 +3,7 @@
 #include <propidl.h>
 #include <algorithm>
 #include <cmath>
+#include <mutex>
 #include <cwctype>
 #include <new>
 
@@ -182,6 +183,101 @@ std::shared_ptr<DecodedPixels> DecodeEmbeddedThumbnail(IWICImagingFactory* facto
     return result;
 }
 
+UINT ReadUShort(IWICMetadataQueryReader* reader, const wchar_t* name, UINT fallback) {
+    PROPVARIANT v;
+    PropVariantInit(&v);
+    UINT out = fallback;
+    if (SUCCEEDED(reader->GetMetadataByName(name, &v))) {
+        if (v.vt == VT_UI2) out = v.uiVal;
+        else if (v.vt == VT_UI1) out = v.bVal;
+    }
+    PropVariantClear(&v);
+    return out;
+}
+
+// Decodes every frame of an animated GIF into full-canvas premultiplied BGRA
+// images, applying each frame's position and disposal the way browsers do.
+// Returns nullptr (caller falls back to a still first frame) if the
+// animation would exceed `maxBytes`.
+std::shared_ptr<DecodedPixels> DecodeGifAnimation(IWICImagingFactory* factory,
+                                                  IWICBitmapDecoder* decoder, UINT count,
+                                                  uint64_t maxBytes) {
+    Microsoft::WRL::ComPtr<IWICMetadataQueryReader> global;
+    UINT cw = 0, ch = 0;
+    if (SUCCEEDED(decoder->GetMetadataQueryReader(&global))) {
+        cw = ReadUShort(global.Get(), L"/logscrdesc/Width", 0);
+        ch = ReadUShort(global.Get(), L"/logscrdesc/Height", 0);
+    }
+    if (cw == 0 || ch == 0) {
+        Microsoft::WRL::ComPtr<IWICBitmapFrameDecode> f0;
+        if (FAILED(decoder->GetFrame(0, &f0)) || FAILED(f0->GetSize(&cw, &ch))) return nullptr;
+    }
+    if (cw == 0 || ch == 0 || cw > kMaxImageDimension || ch > kMaxImageDimension) return nullptr;
+    const uint64_t frameBytes = static_cast<uint64_t>(cw) * ch * 4ULL;
+    if (frameBytes * count > maxBytes) return nullptr;
+
+    const UINT stride = cw * 4;
+    std::vector<BYTE> canvas(static_cast<size_t>(frameBytes), 0);
+    std::vector<BYTE> saved;
+    auto result = std::make_shared<DecodedPixels>();
+    result->width = result->fullWidth = result->srcWidth = cw;
+    result->height = result->fullHeight = result->srcHeight = ch;
+    result->stride = stride;
+    result->estimateBytes = frameBytes * count;
+
+    for (UINT i = 0; i < count; ++i) {
+        Microsoft::WRL::ComPtr<IWICBitmapFrameDecode> frame;
+        if (FAILED(decoder->GetFrame(i, &frame))) break;
+        UINT left = 0, top = 0, delay = 10, disposal = 0;
+        Microsoft::WRL::ComPtr<IWICMetadataQueryReader> meta;
+        if (SUCCEEDED(frame->GetMetadataQueryReader(&meta))) {
+            left = ReadUShort(meta.Get(), L"/imgdesc/Left", 0);
+            top = ReadUShort(meta.Get(), L"/imgdesc/Top", 0);
+            delay = ReadUShort(meta.Get(), L"/grctlext/Delay", 10);
+            disposal = ReadUShort(meta.Get(), L"/grctlext/Disposal", 0);
+        }
+        UINT fw = 0, fh = 0;
+        if (FAILED(frame->GetSize(&fw, &fh))) break;
+        Microsoft::WRL::ComPtr<IWICFormatConverter> conv;
+        if (FAILED(factory->CreateFormatConverter(&conv)) ||
+            FAILED(conv->Initialize(frame.Get(), GUID_WICPixelFormat32bppPBGRA,
+                                    WICBitmapDitherTypeNone, nullptr, 0.0,
+                                    WICBitmapPaletteTypeCustom))) {
+            break;
+        }
+        std::vector<BYTE> px(static_cast<size_t>(fw) * fh * 4);
+        if (FAILED(conv->CopyPixels(nullptr, fw * 4, static_cast<UINT>(px.size()), px.data()))) break;
+
+        if (disposal == 3) saved = canvas; // restore-to-previous: remember state
+        // Draw the frame: GIF transparency is all-or-nothing, so copy opaque pixels.
+        for (UINT y = 0; y < fh && top + y < ch; ++y) {
+            const BYTE* s = px.data() + static_cast<size_t>(y) * fw * 4;
+            BYTE* d = canvas.data() + static_cast<size_t>(top + y) * stride + static_cast<size_t>(left) * 4;
+            for (UINT x = 0; x < fw && left + x < cw; ++x, s += 4, d += 4) {
+                if (s[3] != 0) { d[0] = s[0]; d[1] = s[1]; d[2] = s[2]; d[3] = s[3]; }
+            }
+        }
+        if (i == 0) result->pixels = canvas;
+        else result->extraFrames.push_back(canvas);
+        // Browsers treat 0-1 (x10 ms) delays as 100 ms.
+        result->delaysMs.push_back(delay <= 1 ? 100u : delay * 10u);
+
+        if (disposal == 2) { // restore to background: clear the frame's rectangle
+            for (UINT y = 0; y < fh && top + y < ch; ++y) {
+                BYTE* d = canvas.data() + static_cast<size_t>(top + y) * stride + static_cast<size_t>(left) * 4;
+                const UINT n = std::min(fw, cw > left ? cw - left : 0u);
+                std::fill(d, d + static_cast<size_t>(n) * 4, BYTE{ 0 });
+            }
+        } else if (disposal == 3 && !saved.empty()) {
+            canvas.swap(saved);
+        }
+    }
+    if (result->pixels.empty()) return nullptr;
+    result->estimateBytes = frameBytes * (1 + result->extraFrames.size());
+    result->delaysMs.resize(1 + result->extraFrames.size());
+    return result;
+}
+
 } // namespace
 
 std::shared_ptr<DecodedPixels> DecodeToPixels(IWICImagingFactory* factory,
@@ -203,6 +299,21 @@ std::shared_ptr<DecodedPixels> DecodeToPixels(IWICImagingFactory* factory,
     HRESULT hr = factory->CreateDecoderFromFilename(
         path.c_str(), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnLoad, &decoder);
     if (FAILED(hr)) return fail(hr);
+
+    // Animated GIF: all frames (only for full-size decodes of a reasonable
+    // size; otherwise it falls through to a still first frame).
+    GUID container{};
+    UINT frameCount = 0;
+    if (SUCCEEDED(decoder->GetContainerFormat(&container)) &&
+        container == GUID_ContainerFormatGif &&
+        SUCCEEDED(decoder->GetFrameCount(&frameCount)) && frameCount > 1 &&
+        !(boxW > 0 && boxH > 0 && boxW < 160)) { // not for filmstrip thumbnails
+        constexpr uint64_t kMaxAnimationBytes = 256ULL * 1024 * 1024;
+        if (auto anim = DecodeGifAnimation(factory, decoder.Get(), frameCount,
+                                           std::min<uint64_t>(maxBytes, kMaxAnimationBytes))) {
+            return anim;
+        }
+    }
 
     Microsoft::WRL::ComPtr<IWICBitmapFrameDecode> frame;
     hr = decoder->GetFrame(0, &frame);
@@ -247,7 +358,22 @@ std::shared_ptr<DecodedPixels> DecodeToPixels(IWICImagingFactory* factory,
         if (FAILED(hr)) return fail(hr);
         const UINT tw = swapsAxes ? oh : ow; // scaler works in source orientation
         const UINT th = swapsAxes ? ow : oh;
-        auto reduced = NativeDownscale(factory, frame.Get(), sw, sh, tw, th);
+        // Camera RAW files carry a camera-made JPEG preview: showing it is
+        // instant, while developing the RAW data takes seconds. Use it for the
+        // screen-size view when it is big enough and has the photo's shape;
+        // zooming in still develops the real RAW (full-resolution decode).
+        Microsoft::WRL::ComPtr<IWICBitmapSource> reduced;
+        Microsoft::WRL::ComPtr<IWICBitmapSource> preview;
+        UINT pw = 0, ph = 0;
+        if (SUCCEEDED(decoder->GetPreview(&preview)) && preview &&
+            SUCCEEDED(preview->GetSize(&pw, &ph)) && pw > 0 && ph > 0 &&
+            pw * 4 >= tw * 3 && ph * 4 >= th * 3 &&
+            std::abs(static_cast<double>(pw) / ph - static_cast<double>(sw) / sh) <
+                0.05 * static_cast<double>(sw) / sh) {
+            reduced = preview;
+        } else {
+            reduced = NativeDownscale(factory, frame.Get(), sw, sh, tw, th);
+        }
         hr = scaler->Initialize(reduced.Get(), tw, th, WICBitmapInterpolationModeHighQualityCubic);
         if (FAILED(hr)) return fail(hr);
         source = scaler;
@@ -299,13 +425,64 @@ std::shared_ptr<DecodedPixels> DecodeToPixels(IWICImagingFactory* factory,
     return result;
 }
 
+const std::vector<std::wstring>& SupportedExtensions() {
+    static std::vector<std::wstring> exts;
+    static std::once_flag once;
+    std::call_once(once, [] {
+        // Callable from any thread: initialize COM here if the caller has not.
+        const HRESULT init = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+        Microsoft::WRL::ComPtr<IWICImagingFactory> factory;
+        Microsoft::WRL::ComPtr<IEnumUnknown> en;
+        if (SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
+                                       IID_PPV_ARGS(&factory))) &&
+            SUCCEEDED(factory->CreateComponentEnumerator(WICDecoder, WICComponentEnumerateDefault,
+                                                         &en))) {
+            Microsoft::WRL::ComPtr<IUnknown> item;
+            ULONG fetched = 0;
+            while (en->Next(1, &item, &fetched) == S_OK) {
+                Microsoft::WRL::ComPtr<IWICBitmapCodecInfo> info;
+                if (SUCCEEDED(item.As(&info))) {
+                    UINT len = 0;
+                    if (SUCCEEDED(info->GetFileExtensions(0, nullptr, &len)) && len > 1) {
+                        std::wstring list(len, L'\0');
+                        if (SUCCEEDED(info->GetFileExtensions(len, list.data(), &len))) {
+                            list.resize(wcslen(list.c_str()));
+                            size_t pos = 0;
+                            while (pos < list.size()) {
+                                size_t comma = list.find(L',', pos);
+                                if (comma == std::wstring::npos) comma = list.size();
+                                std::wstring e = ToLower(list.substr(pos, comma - pos));
+                                if (!e.empty() && e[0] != L'.') e.insert(e.begin(), L'.');
+                                if (e.size() > 1 &&
+                                    std::find(exts.begin(), exts.end(), e) == exts.end()) {
+                                    exts.push_back(e);
+                                }
+                                pos = comma + 1;
+                            }
+                        }
+                    }
+                }
+                item.Reset();
+            }
+        }
+        // Safety net: the formats Fast Viewer has always supported.
+        for (const wchar_t* e : { L".jpg", L".jpeg", L".png", L".bmp", L".tif", L".tiff",
+                                  L".webp", L".gif" }) {
+            if (std::find(exts.begin(), exts.end(), e) == exts.end()) exts.push_back(e);
+        }
+        if (SUCCEEDED(init)) CoUninitialize();
+    });
+    return exts;
+}
+
 bool IsSupportedExtension(const std::wstring& path) {
     const size_t dot = path.find_last_of(L'.');
     if (dot == std::wstring::npos) return false;
-    const std::wstring ext = ToLower(path.substr(dot + 1));
-    return ext == L"jpg" || ext == L"jpeg" || ext == L"png" ||
-           ext == L"bmp" || ext == L"tif" || ext == L"tiff" ||
-           ext == L"webp";
+    const size_t slash = path.find_last_of(L"\\/");
+    if (slash != std::wstring::npos && slash > dot) return false;
+    const std::wstring ext = ToLower(path.substr(dot));
+    const auto& exts = SupportedExtensions();
+    return std::find(exts.begin(), exts.end(), ext) != exts.end();
 }
 
 std::shared_ptr<DecodedPixels> DecodeThumbnail(IWICImagingFactory* factory,

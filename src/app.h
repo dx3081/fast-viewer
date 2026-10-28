@@ -59,6 +59,9 @@ private:
     void UpdateDecodeBox();
     void RequestDetailIfNeeded();
     void OnDetailDone(const std::shared_ptr<DecodeResult>& res);
+    void StartAnimation();
+    void StopAnimation();
+    void OnAnimationTick();
     bool DecodeFailedBefore(const std::wstring& path) const;
     void RememberDecodeFailure(const std::wstring& path);
 
@@ -76,6 +79,11 @@ private:
     void Close();
     void ToggleMode();
     void Toggle100Percent();
+    void Rotate(int quarterTurns);
+    void CopyToClipboard();
+    void ShowToast(const std::wstring& text);
+    float EffW() const; // image size as shown (after view rotation)
+    float EffH() const;
     void ZoomAt(POINT clientPt, int wheelDelta);
     void PanBegin(POINT clientPt);
     void PanMove(POINT clientPt);
@@ -106,6 +114,8 @@ private:
     std::shared_ptr<DecodedImage> current_; // screen-size copy (what the cache holds)
     std::shared_ptr<DecodedImage> detail_;  // full-resolution copy of current_, on zoom only
     uint64_t detailRequestId_ = 0;          // in-flight full-resolution decode (0 = none)
+    size_t animFrame_ = 0;                  // animated GIF: frame on screen
+    bool animTimerRunning_ = false;
     UINT boxW_ = 0;                         // screen-size decode box = monitor size, px
     UINT boxH_ = 0;
     std::vector<std::wstring> decodeFailed_; // bounded: never re-preload a broken file
@@ -115,6 +125,8 @@ private:
     std::wstring errorText_;
 
     bool immersive_ = true;
+    int rotation_ = 0;     // view-only rotation in clockwise quarter turns, reset per image
+    std::wstring toast_;   // short on-screen confirmation ("Copied"), cleared by a timer
     enum class ViewMode { Fit, Percent100, Custom };
     ViewMode viewMode_ = ViewMode::Fit;
     float scale_ = 1.0f;

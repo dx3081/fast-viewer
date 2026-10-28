@@ -115,6 +115,7 @@ private:
     std::shared_ptr<DecodedImage> current_; // screen-size copy (what the cache holds)
     std::shared_ptr<DecodedImage> detail_;  // full-resolution copy of current_, on zoom only
     uint64_t detailRequestId_ = 0;          // in-flight full-resolution decode (0 = none)
+    std::wstring detailFailedPath_;         // full-resolution decode failed: do not retry
     size_t animFrame_ = 0;                  // animated GIF: frame on screen
     bool animTimerRunning_ = false;
     UINT boxW_ = 0;                         // screen-size decode box = monitor size, px

@@ -199,9 +199,9 @@ UINT ReadUShort(IWICMetadataQueryReader* reader, const wchar_t* name, UINT fallb
 // images, applying each frame's position and disposal the way browsers do.
 // Returns nullptr (caller falls back to a still first frame) if the
 // animation would exceed `maxBytes`.
-std::shared_ptr<DecodedPixels> DecodeGifAnimation(IWICImagingFactory* factory,
-                                                  IWICBitmapDecoder* decoder, UINT count,
-                                                  uint64_t maxBytes) {
+std::shared_ptr<DecodedPixels> DecodeGifAnimationImpl(IWICImagingFactory* factory,
+                                                      IWICBitmapDecoder* decoder, UINT count,
+                                                      uint64_t maxBytes) {
     Microsoft::WRL::ComPtr<IWICMetadataQueryReader> global;
     UINT cw = 0, ch = 0;
     if (SUCCEEDED(decoder->GetMetadataQueryReader(&global))) {
@@ -238,6 +238,8 @@ std::shared_ptr<DecodedPixels> DecodeGifAnimation(IWICImagingFactory* factory,
         }
         UINT fw = 0, fh = 0;
         if (FAILED(frame->GetSize(&fw, &fh))) break;
+        // A frame larger than the canvas is malformed (or hostile): stop here.
+        if (fw == 0 || fh == 0 || fw > cw || fh > ch) break;
         Microsoft::WRL::ComPtr<IWICFormatConverter> conv;
         if (FAILED(factory->CreateFormatConverter(&conv)) ||
             FAILED(conv->Initialize(frame.Get(), GUID_WICPixelFormat32bppPBGRA,
@@ -276,6 +278,16 @@ std::shared_ptr<DecodedPixels> DecodeGifAnimation(IWICImagingFactory* factory,
     result->estimateBytes = frameBytes * (1 + result->extraFrames.size());
     result->delaysMs.resize(1 + result->extraFrames.size());
     return result;
+}
+
+std::shared_ptr<DecodedPixels> DecodeGifAnimation(IWICImagingFactory* factory,
+                                                  IWICBitmapDecoder* decoder, UINT count,
+                                                  uint64_t maxBytes) {
+    try {
+        return DecodeGifAnimationImpl(factory, decoder, count, maxBytes);
+    } catch (const std::bad_alloc&) {
+        return nullptr; // falls back to a still first frame
+    }
 }
 
 } // namespace
@@ -431,6 +443,7 @@ const std::vector<std::wstring>& SupportedExtensions() {
     std::call_once(once, [] {
         // Callable from any thread: initialize COM here if the caller has not.
         const HRESULT init = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+        { // COM objects must be released before CoUninitialize
         Microsoft::WRL::ComPtr<IWICImagingFactory> factory;
         Microsoft::WRL::ComPtr<IEnumUnknown> en;
         if (SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
@@ -464,6 +477,7 @@ const std::vector<std::wstring>& SupportedExtensions() {
                 }
                 item.Reset();
             }
+        }
         }
         // Safety net: the formats Fast Viewer has always supported.
         for (const wchar_t* e : { L".jpg", L".jpeg", L".png", L".bmp", L".tif", L".tiff",

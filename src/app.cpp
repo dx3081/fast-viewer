@@ -471,7 +471,12 @@ void App::StartNavigation(const std::wstring& path, int target) {
         Log(std::format(L"cache: hit {}", path));
         navLogPending_ = true;
         requestT0Micros_ = NowMicros();
-        DisplayImage(cached, target, true, ++nextRequestId_);
+        // This navigation supersedes any user decode still in flight: its
+        // result must not replace the image shown now.
+        const uint64_t id = ++nextRequestId_;
+        latestUserRequestId_ = id;
+        requestIndex_.clear();
+        DisplayImage(cached, target, true, id);
     } else {
         Log(std::format(L"cache: miss {}", path));
         RequestUserDecode(path, target, true);
@@ -537,6 +542,10 @@ void App::OnDecodeDone(uint64_t id) {
         resultIdx = it->second;
         requestIndex_.erase(requestIndex_.begin(), std::next(it)); // drop it and older ids
     }
+    if (id < shownRequestId_) {
+        Log(std::format(L"decode: stale id={} ignored (newer image on screen)", id));
+        return;
+    }
     if (id != latestUserRequestId_) {
         // Superseded by a newer request (the user kept pressing). Still show it
         // while the newest one decodes, so holding an arrow key scrolls through
@@ -571,6 +580,8 @@ void App::OnDecodeDone(uint64_t id) {
     double uploadMs = 0.0;
     auto img = MakeImage(*res, &uploadMs);
     if (!img) {
+        if (targetIdx >= 0) displayIndex_ = targetIdx;
+        navLogPending_ = false;
         ShowFailure(res->path, E_FAIL, res->decodeMicros);
         return;
     }
@@ -595,6 +606,7 @@ void App::DisplayImage(const std::shared_ptr<DecodedImage>& img, int index,
     current_ = img;
     rotation_ = 0;
     detail_.reset();
+    detailFailedPath_.clear();
     detailRequestId_ = 0;
     currentPath_ = img->path;
     hasImage_ = true;
@@ -635,7 +647,9 @@ void App::OnPreloadDone(uint64_t id) {
     }
     preloadPathPending_.clear();
     if (res->budgetExceeded || res->failed) {
-        RememberDecodeFailure(res->path);
+        // A budget skip depends on how full the cache is right now; only a
+        // real decode failure is remembered for the session.
+        if (!res->budgetExceeded) RememberDecodeFailure(res->path);
         Log(std::format(L"preload: {} id={} {}",
                         res->budgetExceeded ? L"skipped budget" : L"failed", id, res->path));
         SchedulePreload();
@@ -1224,6 +1238,7 @@ void App::UpdateDecodeBox() {
 void App::RequestDetailIfNeeded() {
     if (!hasImage_ || !current_ || !current_->bitmap || detail_) return;
     if (current_->frames.size() > 1) return;
+    if (detailFailedPath_ == currentPath_) return;
     if (detailRequestId_ != 0 || targetIndex_ >= 0) return;
     const float bmpW = static_cast<float>(current_->bitmap->GetPixelSize().width);
     if (bmpW >= static_cast<float>(current_->width)) return; // already full resolution
@@ -1235,6 +1250,7 @@ void App::RequestDetailIfNeeded() {
 
 void App::OnDetailDone(const std::shared_ptr<DecodeResult>& res) {
     detailRequestId_ = 0;
+    if (res->failed && res->path == currentPath_) detailFailedPath_ = res->path;
     if (res->failed || res->path != currentPath_ || !current_) {
         Log(std::format(L"detail: unavailable hr=0x{:08X} {}", static_cast<unsigned>(res->hr),
                         res->path));
@@ -1242,7 +1258,10 @@ void App::OnDetailDone(const std::shared_ptr<DecodeResult>& res) {
     }
     double uploadMs = 0.0;
     auto img = MakeImage(*res, &uploadMs);
-    if (!img) return;
+    if (!img) {
+        detailFailedPath_ = res->path; // e.g. larger than the GPU's maximum bitmap size
+        return;
+    }
     detail_ = img;
     Log(std::format(L"detail: done decode_ms={:.1f} upload_ms={:.1f}",
                     res->decodeMicros / 1000.0, uploadMs));

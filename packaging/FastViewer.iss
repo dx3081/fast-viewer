@@ -147,7 +147,7 @@ Root: HKCU; Subkey: "Software\RegisteredApplications"; ValueType: string; ValueN
 ; Opens Windows Default Apps settings where Windows handles the final user
 ; confirmation. Never launches Fast Viewer itself and never writes UserChoice.
 ; Checked by default; the user can uncheck it before pressing Finish.
-Filename: "ms-settings:defaultapps"; Description: "Set Fast Viewer as the default image viewer"; Flags: nowait postinstall shellexec
+Filename: "ms-settings:defaultapps?registeredAppUser=Fast%20Viewer"; Description: "Open Fast Viewer's default-apps page (pick it for each image type)"; Flags: nowait postinstall shellexec
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}"

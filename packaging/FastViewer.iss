@@ -8,10 +8,10 @@
 ; Build (release-only tool, not part of the viewer runtime):
 ;   ISCC.exe FastViewer.iss
 ;
-; Version is kept in sync with CMakeLists.txt / src/version.h.in (1.1.0-beta1).
+; Version is kept in sync with CMakeLists.txt / src/version.h.in (1.1.0).
 
 #define MyAppName "Fast Viewer"
-#define MyAppVersion "1.1.0-beta1"
+#define MyAppVersion "1.1.0"
 #define MyAppExe "fast_viewer.exe"
 ; All machine-specific inputs are overridable ISPP defines:
 ;   /DMyAppBuildDir=<path>  (default: repo\build relative to this script)
@@ -43,7 +43,7 @@ DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=commandline
 OutputDir={#MyOutputDir}
-OutputBaseFilename=FastViewer-1.1.0-beta1-setup
+OutputBaseFilename=FastViewer-1.1.0-setup
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern

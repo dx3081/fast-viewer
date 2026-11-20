@@ -1,8 +1,8 @@
 # build_release.ps1 — reproducible 1.1 release assembly (release-only tool).
 # Requires: MSVC Build Tools (vcvars64), CMake, Ninja, Inno Setup 6 (ISCC.exe).
 # Produces, under the staging dir (default: repo root .\release):
-#   FastViewer-<version>-portable\   (fast_viewer.exe + README.txt + LICENSE)
-#   FastViewer-<version>-portable.zip
+#   FastViewer-<version>-win64-portable\   (fast_viewer.exe + README.txt + LICENSE)
+#   FastViewer-<version>-win64-portable.zip
 #   FastViewer-<version>-setup.exe   (per-user Inno installer)
 #   SHA256SUMS.txt
 # No binaries are committed to Git; the staging dir is gitignored.
@@ -17,7 +17,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$version = '1.1.0-beta1'
+$version = '1.1.0'
 $exeName = 'fast_viewer.exe'
 
 # --- Tool auto-discovery (no machine-specific hardcoded defaults) ------------
@@ -86,7 +86,7 @@ foreach ($tool in @(
 
 $buildDir = Join-Path $repo $BuildDir
 $staging = [System.IO.Path]::GetFullPath($Staging)
-$portableDir = Join-Path $staging "FastViewer-$version-portable"
+$portableDir = Join-Path $staging "FastViewer-$version-win64-portable"
 
 Write-Host "==> Release staging: $staging"
 
@@ -102,13 +102,13 @@ Write-Host '==> Portable layout'
 if (Test-Path $portableDir) { Remove-Item $portableDir -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $portableDir | Out-Null
 Copy-Item (Join-Path $buildDir $exeName) $portableDir
-Copy-Item (Join-Path $repo 'README.md') (Join-Path $portableDir 'README.txt')
+Copy-Item (Join-Path $PSScriptRoot 'README-portable.txt') (Join-Path $portableDir 'README.txt')  # English end-user README
 Copy-Item (Join-Path $repo 'LICENSE') (Join-Path $portableDir 'LICENSE')
 
 # 3. Portable zip
 Write-Host '==> Portable zip'
 Add-Type -AssemblyName System.IO.Compression.FileSystem
-$zip = Join-Path $staging "FastViewer-$version-portable.zip"
+$zip = Join-Path $staging "FastViewer-$version-win64-portable.zip"
 if (Test-Path $zip) { Remove-Item $zip }
 [System.IO.Compression.ZipFile]::CreateFromDirectory($portableDir, $zip, [System.IO.Compression.CompressionLevel]::Optimal, $false)
 
@@ -122,9 +122,9 @@ if ($LASTEXITCODE -ne 0) { throw 'installer build failed' }
 # 5. Checksums
 Write-Host '==> Checksums'
 $targets = @(
-    "FastViewer-$version-portable.zip",
+    "FastViewer-$version-win64-portable.zip",
     "FastViewer-$version-setup.exe",
-    "FastViewer-$version-portable\$exeName"
+    "FastViewer-$version-win64-portable\$exeName"
 )
 $sums = foreach ($rel in $targets) {
     $h = (Get-FileHash (Join-Path $staging $rel) -Algorithm SHA256).Hash

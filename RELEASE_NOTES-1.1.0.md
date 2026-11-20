@@ -1,6 +1,6 @@
-# Fast Viewer 1.1.0-beta1 — Release Notes (DRAFT)
+# Fast Viewer 1.1.0 — Release Notes
 
-Version: 1.1.0-beta1 (branch `a2-overhaul`; not published)
+Version: 1.1.0
 Target: Windows 10 x64
 Executable: fast_viewer.exe (~543 KB, single file, static runtime, inbox DLLs only)
 
@@ -29,7 +29,7 @@ Executable: fast_viewer.exe (~543 KB, single file, static runtime, inbox DLLs on
 - App icon in the taskbar; DPI-scaled text; Chinese UI text on Chinese Windows.
 - Installer: optional GIF / HEIC / AVIF / RAW "Open with" registration.
 
-## Not verified in this beta
+## Not verified
 
 - HEIC / AVIF / RAW with real files (no samples on the development machine).
 - Installer install/uninstall run (the package builds; not installed).
